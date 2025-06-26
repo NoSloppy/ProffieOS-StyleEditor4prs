@@ -10006,16 +10006,16 @@ function drawScene() {
      if (bad_fps > 20) {
         if (AA_STEP_SIZE < 0) AA_STEP_SIZE-=1; else AA_STEP_SIZE=-1;
         AA+=AA_STEP_SIZE;
-  if (AA < 1) AA = 1;
-  compile();
-  bad_fps = 0;
+        if (AA < 1) AA = 1;
+        compile();
+        bad_fps = 0;
         FIND("error_message").innerHTML = "AA="+AA;
      }
      if (good_fps > 20) {
         if (AA_STEP_SIZE > 0) AA_STEP_SIZE+=1; else AA_STEP_SIZE=1;
         AA+=AA_STEP_SIZE;
-  compile();
-  good_fps = 0;
+        compile();
+        good_fps = 0;
         FIND("error_message").innerHTML = "AA="+AA;
      }
   } else {
