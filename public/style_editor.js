@@ -1,7 +1,10 @@
 var t = 0.0;
-
 var width;
 var height;
+//////////// Fullscreen PR ///////////
+// Fullscreen things
+const canvas = FIND("canvas_id");
+const pageLeftTop = FIND("page_left_top");
 
 function FIND(id) {
   var ret = document.getElementById(id);
@@ -10,6 +13,7 @@ function FIND(id) {
   }
   return ret;
 }
+
 const start_millis = new Date().getTime();
 function actual_millis() {
   return new Date().getTime() - start_millis;
@@ -103,6 +107,8 @@ class Matrix {
     ret.set(2,3,z);
     return ret;
   }
+//////////// indents and line returns PR ///////////
+
   static fromValues(a, b, c, d,
                   e, f, g, h,
                   i, j, k, l,
@@ -155,7 +161,7 @@ function default_move_matrix() {
 
     //    ret  = ret.mult(Matrix.mkxrot(Math.PI/2.0));
     var ret = default_rotation_matrix();
-//    ret = ret.mult(Matrix.mktranslate(0.0, 0.0, -20.0));
+   ret = ret.mult(Matrix.mktranslate(0.0, 0.0, -8.0));
     return ret;
     
 }
@@ -165,6 +171,7 @@ var OLD_MOVE_MATRIX = default_move_matrix();
 var MOUSE_POSITIONS = [];
 var IN_FRAME = false;
 var BLADE_ANGLE = 0.0;
+let HOME_POS = false;
 
 function mouse_speed(t1, t2) {
   var dx = MOUSE_POSITIONS[t1+0]-MOUSE_POSITIONS[t2+0];
@@ -176,14 +183,23 @@ function mouse_speed(t1, t2) {
 
 function mouse_move(e) {
   if (mouseswingsState.get()) return;
+  HOME_POS = false;
   IN_FRAME = true;
-  var canvas = FIND("canvas_id");
+  resizeCanvasAndCamera();
+//////////// Fullscreen PR ///////////
   var rect = canvas.getBoundingClientRect();
   var w = rect.right - rect.left;
   var h = rect.bottom - rect.top;
   var d = min(h, w);
-  var x = (e.clientX - (rect.left + rect.right)/2.0) / d;
-  var y = (e.clientY - (rect.top + rect.bottom)/2.0) / d;
+
+  let x= (e.clientX - (rect.left + rect.right) / 2) / d * 2.5;
+  let y;
+  if (document.fullscreenElement === pageLeftTop || window.enlargeCanvas) {
+    y = (e.clientY - (rect.top + rect.bottom) / 2) / d * 1.5;
+   } else {
+    y = (e.clientY - (rect.top + rect.bottom) / 2) / d;
+  }
+
   var now = actual_millis();
   MOUSE_POSITIONS = MOUSE_POSITIONS.concat([x* 10000, y * 10000, now])
   while (MOUSE_POSITIONS.length > 0 && now - MOUSE_POSITIONS[2] > 100) {
@@ -191,23 +207,39 @@ function mouse_move(e) {
   }
 
 //  console.log("x = "+x+" y = "+y);
-  if (e.shiftKey) {
-    MOVE_MATRIX = default_move_matrix();
-  } else {
+  // if (e.shiftKey) {
+  //   MOVE_MATRIX = default_move_matrix();
+  // } else {
     var SCALE = 100.0;
-    BLADE_ANGLE=-y;
-//    MOVE_MATRIX = Matrix.mkzrot(Math.PI/2.0).mult(Matrix.mkxrot(-y)).mult(Matrix.mkzrot(y));
+    BLADE_ANGLE = -y;
 
-    MOVE_MATRIX = default_rotation_matrix()
-    MOVE_MATRIX = MOVE_MATRIX.mult(Matrix.mkyrot(Math.PI/2.0));
-    MOVE_MATRIX = MOVE_MATRIX.mult(Matrix.mktranslate(1.0 * SCALE, 0.04 * SCALE, 0.0));
-    MOVE_MATRIX = MOVE_MATRIX.mult(Matrix.mkyrot(-x/3));
-    MOVE_MATRIX = MOVE_MATRIX.mult(Matrix.mktranslate(-1.0 * SCALE, 0.0, 0.0));
+    const PIVOT_OFFSET_X = 0.5;  // pivot at grip
+    const swing = x * 20;
+
+    MOVE_MATRIX = default_rotation_matrix();
+    MOVE_MATRIX = MOVE_MATRIX.mult(Matrix.mkyrot(Math.PI / 2.0));
+    let yOffset = -0.04;
+    if (window.enlargeCanvas && !window.fullscreenActive) {
+      yOffset = -0.10;
+    }
+    MOVE_MATRIX = MOVE_MATRIX.mult(Matrix.mktranslate(PIVOT_OFFSET_X * SCALE, yOffset * SCALE, 0.0));
+    MOVE_MATRIX = MOVE_MATRIX.mult(Matrix.mkyrot(-x / 3));
     MOVE_MATRIX = MOVE_MATRIX.mult(Matrix.mkzrot(y));
+    MOVE_MATRIX = MOVE_MATRIX.mult(Matrix.mktranslate(-PIVOT_OFFSET_X * SCALE, 0.0, 0.0));
     MOVE_MATRIX = MOVE_MATRIX.mult(Matrix.mktranslate(-0.17 * SCALE, 0.0, 0.0));
-
-  }
+    MOVE_MATRIX = MOVE_MATRIX.mult(Matrix.mktranslate(0, 0, swing));
+  // }
 //  console.log(MOVE_MATRIX.values);
+
+//////////// SOUND2 PR ///////////
+  // SmoothSwing updates
+  lastSwingSpeed = get_swing_speed();
+  lastSwingUpdate = Date.now();
+  // console.debug(
+  //   `[SwingDebug][mouse_move] lastSwingSpeed=${lastSwingSpeed.toFixed(1)}, ` +
+  //   `lastSwingUpdate=${lastSwingUpdate}`
+  // );
+  triggerAccentEvent(lastSwingSpeed);
 }
 
 function get_swing_speed() {
@@ -241,9 +273,11 @@ function get_swing_accel() {
 
 function mouse_leave(e) {
 //  console.log("Mouse leave!");
-  MOVE_MATRIX = default_move_matrix();
+  // MOVE_MATRIX = default_move_matrix();
+  HOME_POS = true;
   MOUSE_POSITIONS = [];
   IN_FRAME = false;
+  resizeCanvasAndCamera();
 }
 
 function compile() {
@@ -278,6 +312,21 @@ class MyError {
   }
   valueOf() { return this.desc; }
 };
+//////////// SafeguardInputs PR ///////////////
+function ValidateInput(e) {
+  e.target.classList.remove('invalid');
+
+  if (e.target.value === "" || isNaN(Number(e.target.value))) {
+    e.target.classList.add('invalid');
+    // Force focus to keep user in the field
+    setTimeout(() => {
+      e.target.focus();
+      e.target.select();
+    }, 0);
+    return false;
+  }
+}
+//////////// SafeguardInputs PR ///////////////
 
 function Arg(expected_type, arg, default_arg) {
   //console.log("ARGUMENT: " + expected_type);
@@ -734,7 +783,8 @@ function AddEnum(enum_type, name, value) {
   enum_type.value_to_name[value] = name;
   window[name] = value;
   AddIdentifier(name, function() { return new enum_type(value); });
-  console.log(" ENUM " + name + " = " + value);
+//////////// Logging PR ///////////////
+  // console.log(" ENUM " + name + " = " + value);
 }
 
 class EnumBuilder {
@@ -751,7 +801,8 @@ class EnumBuilder {
     this.last_value = value;
     this.value_to_name[value] = name;
     window[name] = value;
-    console.log(" ENUM " + name + " = " + value);
+//////////// Logging PR ///////////////
+    // console.log(" ENUM " + name + " = " + value);
   }
   addToTab(tab, common_prefix) {
     if (!common_prefix) {
@@ -784,7 +835,6 @@ class EnumBuilder {
           return ret;
         }
 
-
         var ret = this.gencomment() + this.value;
         if (this.constructor.value_to_name[this.value]) {
           ret = this.constructor.prefix + this.constructor.value_to_name[this.value];
@@ -808,47 +858,64 @@ class EnumBuilder {
     }
   }
 }
+//////////// Add Accent Swing and Slash to EFFECT ENUM, categorize list.PR ///////////////
 
 const EFFECT_ENUM_BUILDER = new EnumBuilder("EFFECT");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_NONE", 0);
 EFFECT_ENUM_BUILDER.addValue("EFFECT_CLASH");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_STAB");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_BLAST");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_FORCE");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_STAB");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_ACCENT_SWING");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_ACCENT_SLASH");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_SPIN");
+
 EFFECT_ENUM_BUILDER.addValue("EFFECT_BOOT");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_LOCKUP_BEGIN");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_LOCKUP_END");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_DRAG_BEGIN");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_DRAG_END");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_NEWFONT");
+// In-Out
 EFFECT_ENUM_BUILDER.addValue("EFFECT_PREON");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_POSTOFF");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_IGNITION");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_RETRACTION");
+// Lockup
+EFFECT_ENUM_BUILDER.addValue("EFFECT_DRAG_BEGIN");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_DRAG_END");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_LOCKUP_BEGIN");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_LOCKUP_END");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_MELT_BEGIN");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_MELT_END");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_LB_BEGIN");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_LB_END");
+// Utility
 EFFECT_ENUM_BUILDER.addValue("EFFECT_CHANGE");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_NEWFONT");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_LOW_BATTERY");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_POWERSAVE");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_BATTERY_LEVEL");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_VOLUME_LEVEL");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_POWERSAVE");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_BLADEIN");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_BLADEOUT");
+// Other
 EFFECT_ENUM_BUILDER.addValue("EFFECT_ON");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_OFF");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_OFF_CLASH");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_FAST_ON");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_FAST_OFF");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_QUOTE");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_NEXT_QUOTE");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_TRACK");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_SECONDARY_IGNITION");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_SECONDARY_RETRACTION");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_OFF");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_FAST_OFF");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_OFF_CLASH");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_NEXT_QUOTE");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_INTERACTIVE_PREON");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_INTERACTIVE_BLAST");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_TRACK");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_BEGIN_BATTLE_MODE");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_END_BATTLE_MODE");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_BEGIN_AUTO_BLAST");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_END_AUTO_BLAST");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_CLASH_UPDATE");
+// Sound effects
 EFFECT_ENUM_BUILDER.addValue("EFFECT_ALT_SOUND");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_TRANSITION_SOUND");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_SOUND_LOOP");
+// Blaster effects
 EFFECT_ENUM_BUILDER.addValue("EFFECT_STUN");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_FIRE");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_CLIP_IN");
@@ -862,6 +929,10 @@ EFFECT_ENUM_BUILDER.addValue("EFFECT_JAM");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_UNJAM");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_PLI_ON");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_PLI_OFF");
+////////// Add DESTRUCT PR /////////////////
+EFFECT_ENUM_BUILDER.addValue("EFFECT_DESTRUCT");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_BOOM");
+// Mini game effects
 EFFECT_ENUM_BUILDER.addValue("EFFECT_GAME_START");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_GAME_ACTION1");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_GAME_ACTION2");
@@ -872,6 +943,7 @@ EFFECT_ENUM_BUILDER.addValue("EFFECT_GAME_RESULT1");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_GAME_RESULT2");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_GAME_WIN");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_GAME_LOSE");
+// User-definable effects
 EFFECT_ENUM_BUILDER.addValue("EFFECT_USER1");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_USER2");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_USER3");
@@ -880,10 +952,14 @@ EFFECT_ENUM_BUILDER.addValue("EFFECT_USER5");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_USER6");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_USER7");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_USER8");
+// Errors
+EFFECT_ENUM_BUILDER.addValue("EFFECT_LOW_BATTERY");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_SD_CARD_NOT_FOUND");
-EFFECT_ENUM_BUILDER.addValue("EFFECT_ERROR_IN_FONT_DIRECTORY");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_ERROR_IN_BLADE_ARRAY");
+EFFECT_ENUM_BUILDER.addValue("EFFECT_ERROR_IN_FONT_DIRECTORY");
 EFFECT_ENUM_BUILDER.addValue("EFFECT_FONT_DIRECTORY_NOT_FOUND");
+// Menu effects
+EFFECT_ENUM_BUILDER.addValue("EFFECT_MENU_CHANGE");
 EFFECT_ENUM_BUILDER.build();
 
 const LOCKUP_ENUM_BUILDER = new EnumBuilder("LOCKUP_TYPE", "SaberBase::");
@@ -936,6 +1012,116 @@ ArgumentName_ENUM_BUILDER.addValue("STYLE_OPTION3_ARG", 36);
 ArgumentName_ENUM_BUILDER.addValue("IGNITION_OPTION2_ARG", 37);
 ArgumentName_ENUM_BUILDER.addValue("RETRACTION_OPTION2_ARG", 38);
 ArgumentName_ENUM_BUILDER.build();
+
+//////////// SOUND1 PR ///////////
+// Map each EFFECT constant → Proffie sound key (folder or file prefix)
+const EFFECT_SOUND_MAP = {
+  [EFFECT_NONE]:             null,        // no sound
+  [EFFECT_CLASH]:            "clsh",
+  [EFFECT_STAB]:             "stab",
+  [EFFECT_BLAST]:            "blst",
+  [EFFECT_FORCE]:            "force",
+  [EFFECT_BOOT]:             "boot",
+  [EFFECT_NEWFONT]:          "font",
+  [EFFECT_PREON]:            "preon",
+  [EFFECT_POSTOFF]:          "pstoff",
+  [EFFECT_IGNITION]:         "out",
+  [EFFECT_RETRACTION]:       "in",
+  [EFFECT_DRAG_BEGIN]:       "bgndrag",
+  [EFFECT_DRAG_END]:         "enddrag",
+  [EFFECT_LOCKUP_BEGIN]:     "bgnlock",
+  [EFFECT_LOCKUP_END]:       "endlock",
+  // Pseudo-events for lockup bgn/end sound playback / possible future ProffieOS use
+  [EFFECT_MELT_BEGIN]:       "bgnmelt",
+  [EFFECT_MELT_END]:         "endmelt",
+  [EFFECT_LB_BEGIN]:         "bgnlb",
+  [EFFECT_LB_END]:           "endlb",
+
+  [EFFECT_CHANGE]:           "ccchange",
+  [EFFECT_BATTERY_LEVEL]:    "battlevl",
+  [EFFECT_VOLUME_LEVEL]:     "volup",
+  [EFFECT_POWERSAVE]:        "dim",
+  [EFFECT_BLADEIN]:          "bladein",
+  [EFFECT_BLADEOUT]:         "bladeout",
+
+  [EFFECT_ACCENT_SWING]:     "swng",
+  [EFFECT_ACCENT_SLASH]:     "slsh",
+  [EFFECT_SPIN]:             "spin",
+  [EFFECT_FAST_ON]:          "fastout",
+  [EFFECT_QUOTE]:            "quote",
+
+  [EFFECT_BEGIN_BATTLE_MODE]:"bmbegin",
+  [EFFECT_END_BATTLE_MODE]:  "bmend",
+  [EFFECT_BEGIN_AUTO_BLAST]: "blstbgn",
+  [EFFECT_END_AUTO_BLAST]:   "blstend",
+
+  [EFFECT_TRANSITION_SOUND]: "tr",
+  [EFFECT_SOUND_LOOP]:       "trloop",
+
+  [EFFECT_STUN]:             "stun",
+  [EFFECT_FIRE]:             "fire",
+  [EFFECT_CLIP_IN]:          "clipin",
+  [EFFECT_CLIP_OUT]:         "clipout",
+  [EFFECT_RELOAD]:           "reload",
+  [EFFECT_MODE]:             "mode",
+  [EFFECT_RANGE]:            "range",
+  [EFFECT_EMPTY]:            "empty",
+  [EFFECT_FULL]:             "full",
+  [EFFECT_JAM]:              "jam",
+  [EFFECT_UNJAM]:            "unjam",
+  [EFFECT_PLI_ON]:           "plion",
+  [EFFECT_PLI_OFF]:          "plioff",
+  [EFFECT_DESTRUCT]:         "destruct",
+  [EFFECT_BOOM]:             "boom"
+};
+
+// Parse the style and return a Set containing all EFFECTs and LOCKUPs (including via macros)
+function getAllowedEventsFromStyleText() {
+  var style = FIND("style");
+  let text = style.value || "";
+  // Strip block comments: /* … */
+  text = text.replace(/\/\*[\s\S]*?\*\//g, "");
+  // Strip line comments: //
+  text = text.replace(/\/\/.*$/gm, "");
+
+  const allowed = new Set();
+
+  // Literal matches
+  const consts = text.match(/\b(EFFECT|LOCKUP)_[A-Z_]+\b/g) || [];
+  for (const c of new Set(consts)) {
+    if (window[c] !== undefined) {
+      allowed.add(window[c]);
+    }
+  }
+
+  // Map macros to their EFFECTs and LOCKUPs
+  const macroMap = {
+    ResponsiveClashL:     EFFECT_CLASH,
+    ResponsiveStabL:      EFFECT_STAB,
+    ResponsiveBlastL:     EFFECT_BLAST,
+    ResponsiveBlastWaveL: EFFECT_BLAST,
+    ResponsiveBlastFadeL: EFFECT_BLAST,
+
+    ResponsiveLockupL:    [EFFECT_LOCKUP_BEGIN,   EFFECT_LOCKUP_END,   LOCKUP_NORMAL],
+    ResponsiveDragL:      [EFFECT_DRAG_BEGIN,     EFFECT_DRAG_END,     LOCKUP_DRAG],
+    ResponsiveMeltL:      [EFFECT_MELT_BEGIN,     EFFECT_MELT_END,     LOCKUP_MELT],
+    ResponsiveLightningBlockL:[EFFECT_LB_BEGIN,   EFFECT_LB_END,       LOCKUP_LIGHTNING_BLOCK],
+
+    InOutTrL:             [EFFECT_IGNITION,       EFFECT_RETRACTION],
+  };
+
+  for (var macro in macroMap) {
+    if (text.indexOf(macro + "<") !== -1) {
+      var val = macroMap[macro];
+      if (Array.isArray(val)) {
+        val.forEach(function(v) { allowed.add(v); });
+      } else {
+        allowed.add(val);
+      }
+    }
+  }
+  return allowed;
+}
 
 function effect_to_argument(effect) {
   switch (effect + 0) {
@@ -1132,7 +1318,7 @@ class RgbClass extends STYLE {
     H += angle / 16384.0;
     return new RgbClass(f(5+H, C, MAX), f(3+H, C, MAX), f(1+H, C, MAX));
   }
-
+//////////// Because....vite PR ///////////
   argify(state) {
     if (state.color_argument) {
       var ret = RgbArg_(ArgumentName(state.color_argument), this);
@@ -1314,7 +1500,7 @@ class LayersClass extends STYLE {
 function Layers(BASE, Layer1, Layer2) {
   return new LayersClass(Array.from(arguments));
 }
-
+//////////// indents and line returns PR ///////////
 function enc(s) {
   return s.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -1325,7 +1511,6 @@ function encstr(s) {
 function mkbutton2(name, val) {
   return "<input type=button class='btn' onclick='SetToAndFormat(\""+val+"\", event)' value='"+enc(name)+"'>\n";
 }
-
 function mkbutton(name) {
   return mkbutton2(name, name);
 }
@@ -1374,9 +1559,10 @@ function AddHistory(name, type) {
   var label = name;
   if (label.length > 80) label = label.slice(0,78) + "...";
   name = name.split("\n").join(" ").split("   ").join(" ").split("  ").join(" ").split("< ").join("<");
-  var btn = "<input type=button class=btn onclick='SetToAndFormat(\""+name+"\")' value='"+enc(label)+"'>\n";
-  var tag  = "<span class=MAGIC_CLASS_"+type+">" + btn + "</span>\n";
-  history_html = tag + history_html.replace(tag, "");
+//////////// History PR ///////////
+  // Add data-type and new class
+  var btn = "<input type='button' class='history-btn' data-type='" + type + "' onclick='SetToAndFormat(\"" + name + "\", event)' value='" + enc(label) + "'>\n";
+  history_html = btn + history_html.replace(btn, "");
   FIND("history_tabcontent").innerHTML = history_html;
 }
 
@@ -1385,7 +1571,6 @@ function mapcolor(x) {
   x = Math.pow(x, 1.0/2.2);
   return Math.round(x * 255);
 }
-
 
 //sort color by hue
 function rgbToHsl(r, g, b) {
@@ -1418,7 +1603,8 @@ function mkcolorbutton(name, r, g, b) {
   g = mapcolor(g);
   b = mapcolor(b);
   var hsl = rgbToHsl(r, g, b);
-  console.log("mkcolorbutton:name="+name+"  rgb="+r+","+g+","+b+"    hsl="+hsl[0]+","+hsl[1]+","+hsl[2]+"  ");
+//////////// Logging PR ///////////////
+  // console.log("mkcolorbutton:name="+name+"  rgb="+r+","+g+","+b+"    hsl="+hsl[0]+","+hsl[1]+","+hsl[2]+"  ");
   var sortString;
   if (hsl[1] == 0.0) {
     sortString = "C:"+hsl[2];
@@ -1452,8 +1638,7 @@ AddTemplate("StyleNormalPtr<Pulsing<Red, Rgb<50,0,0>, 5000>, White, 300, 800, Re
 AddTemplate("StyleRainbowPtr<300, 800>");
 AddTemplate("StyleStrobePtr<White, Rainbow, 15, 300, 800>");
 AddTemplate("StyleFirePtr<Red, Yellow>");
-AddTemplate("Layers<Red, ResponsiveLockupL<White, TrInstant, TrFade<100>, Int<26000>, Int<6000>>,ResponsiveLightningBlockL<White, TrInstant, TrInstant>,ResponsiveMeltL<Mix<TwistAngle<>,Red,Yellow>, TrWipeIn<600>, TrWipe<600>, Int<4000>, Int<10000>>,ResponsiveDragL<White, TrInstant, TrInstant, Int<2000>, Int<10000>>,ResponsiveClashL<White, TrInstant, TrFade<200>, Int<26000>, Int<6000>>,ResponsiveBlastL<White, Int<400>, Int<100>, Int<400>, Int<28000>, Int<8000>>,ResponsiveBlastWaveL<White, Int<400>, Int<100>, Int<400>, Int<28000>, Int<8000>>,ResponsiveBlastFadeL<White, Int<8000>, Int<400>, Int<28000>, Int<8000>>,ResponsiveStabL<White, TrWipeIn<600>, TrWipe<600>, Int<14000>, Int<8000>>,InOutTrL<TrWipe<300>, TrWipeIn<500>>>");
-
+AddTemplate("Layers<Red,ResponsiveLockupL<White,TrInstant,TrFade<100>,Int<26000>>,ResponsiveLightningBlockL<White>,ResponsiveMeltL<Mix<TwistAngle<>,Red,Yellow>>,ResponsiveDragL<White>,ResponsiveClashL<White,TrInstant,TrFade<200>,Int<26000>>,ResponsiveBlastL<White>,ResponsiveBlastWaveL<White>,ResponsiveBlastFadeL<White>,ResponsiveStabL<White>,InOutTrL<TrWipe<300>,TrWipeIn<500>>>");
 
 AddLayer("AlphaL<Red, Int<16000>>");
 AddLayer("AlphaMixL<Bump<Int<16384>,Int<16384>>,Red,Green,Blue>");
@@ -1467,6 +1652,7 @@ AddLayer("BrownNoiseFlickerL<Magenta, Int<50>>");
 AddEffect("ColorChange<TrInstant, Red, Green, Blue>");
 AddEffect("ColorSelect<Variation, TrInstant, Red, Green, Blue>");
 AddFunction("IntSelect<Variation, 0, 8192,32768>");
+//////////// indents and line returns PR ///////////
 AddEffect("ColorCycle<Blue, 0, 1, Cyan, 100, 3000, 5000>");
 AddEffect("ColorSequence<500, Red, Green, Blue>");
 AddEffect("EffectSequence<EFFECT_CLASH, Red, Green, Blue>");
@@ -1517,10 +1703,8 @@ AddFunction("BendTimePow<1000, 16384>");
 AddFunction("BendTimePowInv<1000, 16384>");
 AddFunction("ReverseTime<1000, 16384>");
 
-
 AddEffect("IgnitionDelay<500, InOutHelper<EasyBlade<OnSpark<Green>, White>, 300, 800>>>");
 AddEffect("RetractionDelay<500, InOutHelper<EasyBlade<OnSpark<Green>, White>, 300, 800>>>");
-
 
 AddLayer("TransitionEffectL<TrConcat<TrWipe<50>, White, TrWipe<50>>, EFFECT_BLAST>");
 AddLayer("MultiTransitionEffectL<TrConcat<TrWipe<50>, White, TrWipe<50>>, EFFECT_BLAST>");
@@ -1741,6 +1925,7 @@ var MAGENTA = Rgb(255,0,255);
 var WHITE = Rgb(255,255,255);
 var BLACK = Rgb(0,0,0);
 var OrangeRed = Rgb(255,14,0);
+//////////// indents and line returns PR ///////////
 
 //--
 class RainbowClass extends STYLE {
@@ -1764,6 +1949,8 @@ function Rainbow() {
 }
 
 var STATE_ON = 0;
+//////////// SOUND1 PR ///////////
+var STATE_WAIT_FOR_ON = 0;
 // 1 = lockup
 // 2 = drag
 // 3 = lb
@@ -1773,6 +1960,18 @@ var STATE_ROTATE = 0;
 var STATE_NUM_LEDS = 144;
 
 var handled_lockups = {};
+
+// For logging
+const LOCKUP_TYPE_NAMES = {
+  1: "LOCKUP_NORMAL",
+  2: "LOCKUP_DRAG",
+  3: "LOCKUP_LIGHTNING_BLOCK",
+  4: "LOCKUP_MELT"
+};
+
+function lockupNameFromValue(val) {
+  return LOCKUP_TYPE_NAMES[val] || val;
+}
 
 function IsHandledLockup(lockup_type) {
   return current_style.__handled_lockups[lockup_type];
@@ -1785,7 +1984,6 @@ function HandleLockup(lockup_type) {
   handled_lockups[lockup_type] = 1;
 }
 
-
 class BladeEffect {
   constructor(type, start_micros, location) {
     this.type = type;
@@ -1794,7 +1992,6 @@ class BladeEffect {
     this.wavnum = random(10);
   }
 };
-
 
 class Range {
   constructor(start, end) {
@@ -1878,7 +2075,6 @@ function ColorCycle(COLOR, percentage, rpm,
                              ON_COLOR, on_percentage, on_rpm,
                              fade_time_millis);
 }
-
 
 class CylonClass extends STYLE {
   constructor(COLOR, percentage, rpm,
@@ -2281,7 +2477,6 @@ class GradientClass extends STYLE {
 function Gradient(A, B, C, D) {
   return new GradientClass(Array.from(arguments));
 }
-
 
 class MixClass extends STYLE {
   constructor(ARGS) {
@@ -3062,14 +3257,9 @@ function AddClash() {
 function AddStab() {
   blade.addEffect(EFFECT_STAB, 1.0);
 }
-function AddNewfont() {
-  blade.addEffect(EFFECT_NEWFONT, Math.random() * 0.7 + 0.2);
-}
-function AddBoot() {
-  blade.addEffect(EFFECT_BOOT, Math.random() * 0.7 + 0.2);
-}
-function AddPreon() {
-  blade.addEffect(EFFECT_PREON, 0.0);
+//////////// Add swing button, boot and newfont to menu PR ///////////
+function AddSwing() {
+  blade.addEffect(EFFECT_ACCENT_SWING, Math.random() * 0.7 + 0.2);
 }
 
 var blast_hump = [ 255,255,252,247,240,232,222,211,
@@ -3180,7 +3370,6 @@ function BlastFadeoutF(FADEOUT_MS, EFFECT) {
   return new BlastFadeoutFClass(FADEOUT_MS, EFFECT);
 }
 
-
 class BlastFadeoutLClass extends MACRO {
   constructor(BLAST, FADEOUT_MS, EFFECT_ARG) {
     super("BlastFadeout layers", Array.from(arguments));
@@ -3194,7 +3383,6 @@ class BlastFadeoutLClass extends MACRO {
 function BlastFadeoutL(BLAST, FADEOUT_MS, EFFECT) {
   return new BlastFadeoutLClass(BLAST, FADEOUT_MS, EFFECT);
 }
-
 
 class BlastFadeoutClass extends MACRO {
   constructor(BASE, BLAST, FADEOUT_MS, EFFECT_ARG) {
@@ -3415,7 +3603,6 @@ function SimpleClash(T, CLASH, MILLIS, EF, SS) {
   return new SimpleClashClass(T, CLASH, MILLIS, EF, SS);
 }
 
-
 class LocalizedClashLClass extends STYLE {
   constructor(CLASH_COLOR, CLASH_MILLIS, CLASH_WIDTH_PERCENT, EFFECT_ARG) {
     super("Localized clash", arguments);
@@ -3556,7 +3743,6 @@ function Lockup(BASE, LOCKUP, DRAG, LOCKUP_SHAPE, DRAG_SHAPE) {
   return new LockupClass(BASE, LOCKUP, DRAG, LOCKUP_SHAPE, DRAG_SHAPE);
 }
 
-
 class LockupTrLClass extends STYLE {
   constructor(COLOR, BeginTr, EndTr, LOCKUP_TYPE) {
     super("Transition based lockup effect.", arguments);
@@ -3688,7 +3874,11 @@ class Blade {
     return STATE_NUM_LEDS;
   }
   addEffect(type, location) {
-    console.log("Add effect " + type + " @ " + location);
+//////////// Logging PR ///////////////
+    // Use actual effect name for console logging clarity.
+    const effectName = Object.keys(window).find(
+      key => window[key] === type && key.indexOf("EFFECT_") === 0) || type;
+    console.log("Add effect " + effectName + " (" + type + ") @ " + location);
     this.effects_.push(new BladeEffect(type, micros(), location));
   }
   GetEffects() {
@@ -3696,6 +3886,81 @@ class Blade {
       this.effects_.shift();
     }
     return this.effects_;
+  }
+};
+
+//////////// SOUND1 PR ///////////////
+// blade.addEffect override
+const origAddEffect = Blade.prototype.addEffect;
+
+Blade.prototype.addEffect = function(type, location) {
+  type = Number(type);
+  // Run the original so visuals still trigger
+  origAddEffect.call(this, type, location);
+
+  // Auto-follow DESTRUCT → BOOM
+  if (type === EFFECT_DESTRUCT) {
+    setTimeout(() => {
+      const idx = lastPlayedSoundIndex['destruct'];
+      const rawDur = customFontSoundDurations['destruct']?.[idx];
+      const dur = (typeof rawDur === 'number' && rawDur > 50) ? rawDur : 500;
+      setTimeout(() => {
+        this.addEffect(EFFECT_BOOM, location);
+      }, dur);
+    }, 10);
+  }
+
+  const allowedByStyle = new Set(
+    Array.from(getAllowedEventsFromStyleText())
+      .filter(x =>
+        EFFECT_ENUM_BUILDER.value_to_name.hasOwnProperty(x) ||
+        LOCKUP_ENUM_BUILDER.value_to_name.hasOwnProperty(x)
+      )
+  );
+  const BEGIN_EFFECT_MAP = {
+    [EFFECT_LOCKUP_BEGIN]: "bgnlock",
+    [EFFECT_DRAG_BEGIN]:   "bgndrag",
+    [EFFECT_MELT_BEGIN]:   "bgnmelt",
+    [EFFECT_LB_BEGIN]:     "bgnlb"
+  };
+  if (BEGIN_EFFECT_MAP[type]) {
+    const lockupType = lockupTypeForEffect(type);
+    if (allowedByStyle.has(lockupType)) {
+      // Triggered by Do Selected Effect button
+      if (window.lockupLoopSrc) playRandomEffect(BEGIN_EFFECT_MAP[type], true);
+      // Triggered by Lockup chooser dropdow
+      if (!window.lockupLoopSrc) startLockupLoop(type);
+    }
+    return;
+  }
+
+    const END_EFFECT_MAP = {
+      [EFFECT_LOCKUP_END]: "endlock",
+      [EFFECT_DRAG_END]:   "enddrag",
+      [EFFECT_MELT_END]:   "endmelt",
+      [EFFECT_LB_END]:     "endlb"
+    };
+    // if (END_EFFECT_MAP[type]) {
+// needed this for some reason, now not...?
+    //   // If being called because we are forcibly ending a lockup with "Stop"
+    //   // always end the lockup loop (even if sound is denied by style)
+    //   const forceEnd = !allowedByStyle.has(type) && window.lockupLoopSrc;
+    //   endLockupLoop(type, (allowedByStyle.has(type) || forceEnd) ? END_EFFECT_MAP[type] : null, true);
+    //   return;
+    // }
+    if (END_EFFECT_MAP[type]) {
+      // Always play the end sound for lockup ends, regardless of allowedByStyle
+      endLockupLoop(type, END_EFFECT_MAP[type], true);
+      return;
+    }
+
+  const allowedByFocus = (!current_focus || current_focus.constructor.name === 'LayersClass');
+
+  // Else, only play sound if it's in the textarea.
+  const effectName = EFFECT_SOUND_MAP[type];
+  if (effectName) {
+  const isAllowed = allowedByFocus || allowedByStyle.has(type);
+  playRandomEffect(effectName, isAllowed);
   }
 };
 
@@ -3940,6 +4205,7 @@ class InOutHelperLClass extends MACRO {
 function InOutHelperL(EX, O, AD) {
   return new InOutHelperLClass(EX, O, AD);
 }
+//////////// indents and line returns PR ///////////
 
 class InOutHelperXClass extends MACRO {
   constructor(T, EXTENSION, OFF_COLOR, ALLOW_DISABLE) {
@@ -4327,16 +4593,23 @@ class InOutTrLClass extends STYLE {
     this.add_arg("IN_TR", "TRANSITION", "OUT-IN transition");
     this.add_arg("OFF", "COLOR", "Color when off", BLACK.DOCOPY());
     this.add_arg("ALLOW_DISABLE", "INT", "allow disable?", 1);
-    this.on_ = false;
+//////////// No re-ignition on focusout PR ///////////////
+    // Only triggers ignition on a real on/off change (not just a focus event).
+    this.on_ = STATE_ON;
+    this._last_state = STATE_ON;
     this.out_active_ = false;
     this.in_active_ = false;
   }
   run(blade) {
     this.OFF.run(blade);
 
-    if (this.on_ != blade.is_on()) {
-      this.on_ = blade.is_on();
-      if (this.on_) {
+    // If blade power state just changed:
+    const nowOn = blade.is_on();
+    if (nowOn !== this._last_state) {
+      this._last_state = nowOn;
+      this.on_         = nowOn;
+
+      if (nowOn) {
         this.OUT_TR.begin();
         this.out_active_ = true;
       } else {
@@ -4559,7 +4832,7 @@ class ReverseTimeClass extends MACRO {
 function ReverseTime(MILLIS) {
   return new ReverseTimeClass(MILLIS);
 }
-
+//////////// indents and line returns PR ///////////
 class TrInstantClass extends TRANSITION {
   constructor() {
     super("Instant transition");
@@ -4743,6 +5016,7 @@ class TrBoingClass extends MACRO {
 }
 
 function TrBoing(MILLIS, N) { return new TrBoingClass(MILLIS, N); }
+
 
 class TrWipeXClass extends TRANSITION_BASE {
   constructor(MILLIS) {
@@ -4969,6 +5243,7 @@ class TrWipeInSparkTipClass extends MACRO {
 
 function TrWipeInSparkTip(C, M, S) { return new TrWipeInSparkTipClass(C, M, S); }
 
+//////////// indents and line returns PR ///////////
 class TrWaveXClass extends TRANSITION {
   constructor(COLOR, FADEOUT_MS, WAVE_SIZE, WAVE_MS, WAVE_CENTER) {
     super("Wave travelling outwards.", arguments);
@@ -5468,7 +5743,7 @@ class TrDoEffectAlwaysClass extends MACRO {
 function TrDoEffectAlways(TRANSITION, EFFECT, WAVNUM, LOCATION) {
   return new TrDoEffectAlwaysClass(TRANSITION, EFFECT, WAVNUM, LOCATION);
 }
-
+//////////// indents and line returns PR ///////////
 class TrDoEffectXClass extends TRANSITION {
   constructor(TRANSITION, EFFECT, WAVNUM, LOCATION) {
     super("Do effect", arguments);
@@ -5692,6 +5967,7 @@ function Bump(P, F) {
   return new BumpClass(P, F);
 }
 
+//////////// indents and line returns PR ///////////
 class ChangeSlowlyClass extends FUNCTION {
   constructor(F, SPEED) {
     super("Changes F by no more than SPEED values per second.", arguments);
@@ -6143,7 +6419,39 @@ class WavLenClass extends FUNCTION {
     super("Length of associated wav file in MS", arguments);
     this.add_arg("EFFECT", "EFFECT", "Which effect to get the length of.", EFFECT(EFFECT_NONE));
   }
-  getInteger(led) { return 500; }
+//////////////// WAVLEN PR /////////////////
+  // WavLen value can be set in settings panel
+  setLength(value) {
+    this.wavlenValue = value;
+     console.log("Updated WavLen: ", this.wavlenValue);
+  }
+  getInteger(led) {
+    const effectArg  = this.EFFECT?.value;
+    const effectName = EFFECT_SOUND_MAP[effectArg];
+    // Build durations array from loaded buffers
+    const durations  = pickLoopBuffers(effectName)
+                          .map(b => b?.duration ? Math.round(b.duration * 1000) : null);
+
+    // Prevent lastPlayedSoundIndex[effectName] from being undefined:
+    // This keeps EFFECTS from missing the sound duration when loading the default font with Sound OFF.
+    // Defaults to first buffer so WavLen uses the real duration even before any sound is actually played.
+    const rawIdx = lastPlayedSoundIndex[effectName];
+    const idx = (typeof rawIdx === 'number' && rawIdx >= 0 && rawIdx < durations.length)
+                  ? rawIdx
+                  : 0;
+    let result;
+    if (
+      useFontWavLenState.get() &&
+      effectName &&
+      Array.isArray(durations) &&
+      durations[idx] != null
+    ) {
+      result = durations[idx];
+    } else {
+      result = myWavLen.wavlenValue;
+    }
+    return result;
+  }
 };
 
 function WavLen(EFFECT) { return new WavLenClass(EFFECT); }
@@ -6236,7 +6544,6 @@ class SwingAccelerationClass extends MACRO {
 };
 
 function SwingAcceleration(MAX) { return new SwingAccelerationClass(MAX); }
-
 
 class LayerFunctionsClass extends FUNCTION {
   constructor(ARGS) {
@@ -6402,14 +6709,19 @@ class SyncAltToVarianceFClass extends FUNCTION {
     if (VAR == this.last_ && Alt() == this.last_) return;
     if (this.last_ == 0x7fffffff) {
       console.log("SYNC FIRST");
-      FIND("ALT").value = VAR;
+//////////// SafeguardInputs PR ///////////////
+      FIND("ALT_VALUE").value = VAR;
     } else if (VAR != this.last_) {
-      console.log("SYNC ALT");
-      FIND("ALT").value = VAR;
+      if (isNaN(VAR)) VAR = 0;
+      console.log("SYNC ALT: " + VAR);
+      FIND("ALT_VALUE").value = VAR;
       blade.addEffect(EFFECT_ALT_SOUND, 0.0);
     } else {
       console.log("SYNC VAR");
       VAR = Alt();
+      if (isNaN(VAR)) VAR = 0;
+      console.log("SYNC VAR: " + VAR);
+//////////// SafeguardInputs PR ///////////////
       FIND("VARIANT_VALUE").value = VAR;
     }
     this.last_ = VAR;
@@ -7280,7 +7592,6 @@ function newCall(Cls) {
   return new (Function.prototype.bind.apply(Cls, arguments));
 }
 
-
   var classes = {
     AlphaL : AlphaL,
     AlphaMixL : AlphaMixL,
@@ -7527,7 +7838,6 @@ function newCall(Cls) {
     LockupPulseF : LockupPulseF,
 };
 
-
 AddIdentifier("RgbCycle", RgbCycle);
 AddIdentifier("Rainbow", Rainbow);
 AddIdentifier("WHITE", Rgb.bind(null, 255,255,255));
@@ -7634,7 +7944,8 @@ AddIdentifier("ViolentViolet", Rgb.bind(null, 55, 0, 255));
 
 class Parser {
   constructor(str, classes, identifiers) {
-    console.log("PARSING: " + str);
+//////////// Logging PR ///////////////
+    // console.log("PARSING: " + str);
     this.str = str;
     this.pos = 0;
     this.classes = classes;
@@ -7909,35 +8220,34 @@ var timeFactor = 1.0;
 var bad_fps = 0;
 var good_fps = 0;
 
+// var popupIdentifier;
+// var popupWindow = FIND("popup_window");
+// var popupOverlay = FIND("popup_overlay");
 
-var popupIdentifier;
-var popupWindow = FIND("popup_window");
-var popupOverlay = FIND("popup_overlay");
+// function showPopupMessage(message, currentPopup) {
+//   popupIdentifier = currentPopup;
+//   var checkbox = FIND("dont_show_again");
+//   checkbox.checked = localStorage.getItem(popupIdentifier) === "false";
 
-function showPopupMessage(message, currentPopup) {
-  popupIdentifier = currentPopup;
-  var checkbox = FIND("dont_show_again");
-  checkbox.checked = localStorage.getItem(popupIdentifier) === "false";
+//   if (localStorage.getItem(popupIdentifier) === "false") {
+//     console.log(popupIdentifier + " is disabled.");
+//   } else {
+//     FIND("popup_message").innerHTML = message;
+//     popupWindow.classList.add("show");
+//     popupOverlay.classList.add("show");
+//   }
+// }
 
-  if (localStorage.getItem(popupIdentifier) === "false") {
-    console.log(popupIdentifier + " is disabled.");
-  } else {
-    FIND("popup_message").innerHTML = message;
-    popupWindow.classList.add("show");
-    popupOverlay.classList.add("show");
-  }
-}
+// function dismissPopupMessage() {
+//   popupWindow.classList.remove("show");
+//   popupOverlay.classList.remove("show");
+// }
 
-function dismissPopupMessage() {
-  popupWindow.classList.remove("show");
-  popupOverlay.classList.remove("show");
-}
-
-function DontShowAgain(checkboxState) {
-  checkboxState = !checkboxState;
-  localStorage.setItem(popupIdentifier, checkboxState);
-  console.log("Saving " + popupIdentifier + " " + checkboxState);
-}
+// function DontShowAgain(checkboxState) {
+//   checkboxState = !checkboxState;
+//   localStorage.setItem(popupIdentifier, checkboxState);
+//   console.log("Saving " + popupIdentifier + " " + checkboxState);
+// }
 
 var pixels;
 var AA = 1;
@@ -8056,9 +8366,7 @@ function getSaberMove() {
         0.0, 0.0, 0.0, 1.0).mult(rotation);
     rotation = rotation.mult(Matrix.mkyrot(Math.PI/2.0));
     rotation = rotation.mult(Matrix.mktranslate(0.0, 0.0, -250.0));
-
-    
-  return rotation;  
+  return rotation;
 }
 
 function drawScene() {
@@ -8167,6 +8475,7 @@ function tick() {
   window.requestAnimationFrame(tick);
   drawScene();
 }
+
 var overall_string;
 
 function ReplaceCurrentFocus(str) {
@@ -8226,10 +8535,7 @@ function ReplaceCurrentFocus(str) {
   }
   var type = "COLOR";
   var classname = "Style";
-//  if (current_focus && current_style && current_focus != current_style) {
-//    type = current_style.getType();
-//    classname = current_focus.constructor.name;
-//  }
+//////////// History PR ///////////
 
   if (current_style) {
     type = current_style.getType();
@@ -8237,67 +8543,186 @@ function ReplaceCurrentFocus(str) {
   }
 
   AddHistory(current_focus_url, current_style.getType());
-  console.log("TYPE = " + type);
-  // FIND("color_links").className = type == "COLOR" ? "normal" : "grayout";
-  // FIND("effect_links").className = type == "COLOR" ? "normal" : "grayout";
-  // FIND("effect_type_links").className = type == "EFFECT" ? "normal" : "grayout";
-  // FIND("template_links").className = type == "COLOR" ? "normal" : "grayout";
-  // FIND("function_links").className = type == "FUNCTION" ? "normal" : "grayout";
-  // FIND("transition_links").className = type == "TRANSITION" ? "normal" : "grayout";
+  highlightHistoryButtons(type);
+
   FIND("expand_button").className = current_style && current_style.isMacro ? "button-on" : "button-off";
   FIND("layerize_button").className = CanLayerize(current_style) ? "button-on" : "button-off";
 
   if (type == "COLOR" && classname.endsWith("LClass")) {
-    ActivateTab("layer");
+    ActivateTab("layer", true);
   } else if (type == "COLOR" && (classname == "Rgb16Class" || classname == "RgbClass")) {
-    ActivateTab("rgb");
+    ActivateTab("rgb", true);
   } else if (type === "ArgumentName") {
-    ActivateTab("arguments");
+    ActivateTab("arguments", true);
   } else {
-    ActivateTab(type.toLowerCase());
+    ActivateTab(type.toLowerCase(), true);
   }
+}
 
-  for (var i = 0; i < document.styleSheets.length; i++) {
-    var sheet = document.styleSheets[i];
-    for (var r = 0; r < sheet.cssRules.length; r++) {
-      var rule = sheet.cssRules[r];
-      if (rule.cssText.toLowerCase().includes("magic_class_") ) {
-        if (rule.cssText.toLowerCase().includes("magic_class_" + type.toLowerCase())) {
-          rule.style.background = "lightblue";
-          rule.style.color = "black";
-        } else {
-          rule.style.background = "lightgray";
-          rule.style.color = "darkgray";
-        }
+function highlightHistoryButtons(validType) {
+  // console.log('highlightHistoryButtons called with type:', validType);
+  const allButtons = document.querySelectorAll('#history_tabcontent .history-btn');
+  allButtons.forEach(btn => {
+    btn.classList.remove('history-btn-valid', 'history-btn-invalid');
+    if (btn.dataset.type === validType) {
+      btn.classList.add('history-btn-valid');
+    } else {
+      btn.classList.add('history-btn-invalid');
+    }
+  });
+}
+//////////// History PR ///////////
+
+//////////// Resolve empty WavLen<> PR ///////////
+// This replaces any empty WavLen<> in a TransitionEffectL with WavLen<EFFECT_XXXX>
+function autoBindWavLen(styleString) {
+  let out = '';
+  let i = 0;
+  while (i < styleString.length) {
+    let start = styleString.indexOf('TransitionEffectL<', i);
+    if (start === -1) {
+      out += styleString.slice(i);
+      break;
+    }
+    out += styleString.slice(i, start);
+    let bracketDepth = 0;
+    let j = start + 'TransitionEffectL<'.length;
+    for (; j < styleString.length; ++j) {
+      if (styleString[j] === '<') bracketDepth++;
+      else if (styleString[j] === '>') {
+        if (bracketDepth === 0) break;
+        bracketDepth--;
       }
-      if (rule.cssText.toLowerCase().includes("magic_invisible_class_") ) {
-        if (rule.cssText.toLowerCase().includes("magic_invisible_class_" + type.toLowerCase())) {
-          rule.style.display = 'inline';
-        } else {
-          rule.style.display = 'none';
-        }
+    }
+    if (j >= styleString.length) {
+      // Malformed, just copy rest
+      out += styleString.slice(start);
+      break;
+    }
+    // Now grab the inside: a comma-separated args list, last is effectName
+    const inside = styleString.slice(start + 'TransitionEffectL<'.length, j);
+    let depth = 0, lastComma = -1;
+    for (let k = 0; k < inside.length; ++k) {
+      if (inside[k] === '<') depth++;
+      else if (inside[k] === '>') depth--;
+      else if (inside[k] === ',' && depth === 0) lastComma = k;
+    }
+    if (lastComma === -1) {
+      out += styleString.slice(start, j + 1);
+      i = j + 1;
+      continue;
+    }
+    const effectBody = inside.slice(0, lastComma).trim();
+    const effectName = inside.slice(lastComma + 1).trim();
+    // Replace all WavLen<> with WavLen<effectName> in effectBody
+    const fixedBody = effectBody.replace(/WavLen\s*<\s*>/g, `WavLen<${effectName}>`);
+    out += `TransitionEffectL<${fixedBody},${effectName}>`;
+    i = j + 1;
+  }
+  return out;
+}
+
+// This replaces any empty WavLen<> in an InOutTrL with WavLen<EFFECT_XXXX>
+function autoBindWavLenInOutTrL(styleString) {
+  let out = '';
+  let i = 0;
+  while (i < styleString.length) {
+    let start = styleString.indexOf('InOutTrL<', i);
+    if (start === -1) {
+      out += styleString.slice(i);
+      break;
+    }
+    out += styleString.slice(i, start);
+    let bracketDepth = 0;
+    let j = start + 'InOutTrL<'.length;
+    for (; j < styleString.length; ++j) {
+      if (styleString[j] === '<') bracketDepth++;
+      else if (styleString[j] === '>') {
+        if (bracketDepth === 0) break;
+        bracketDepth--;
       }
+    }
+    if (j >= styleString.length) {
+      // Malformed, just copy rest
+      out += styleString.slice(start);
+      break;
+    }
+    const inside = styleString.slice(start + 'InOutTrL<'.length, j);
+    // Bracket-aware split on top-level comma
+    let depth = 0, split = -1;
+    for (let k = 0; k < inside.length; ++k) {
+      if (inside[k] === '<') depth++;
+      else if (inside[k] === '>') depth--;
+      else if (inside[k] === ',' && depth === 0) {
+        split = k;
+        break;
+      }
+    }
+    if (split === -1) {
+      out += styleString.slice(start, j + 1);
+      i = j + 1;
+      continue;
+    }
+    const inTr = inside.slice(0, split).trim();
+    const outTr = inside.slice(split + 1).trim();
+    let inFixed = inTr.replace(/WavLen\s*<\s*>/g, 'WavLen<EFFECT_IGNITION>');
+    let outFixed = outTr.replace(/WavLen\s*<\s*>/g, 'WavLen<EFFECT_RETRACTION>');
+    out += `InOutTrL<${inFixed},${outFixed}>`;
+    i = j + 1;
+  }
+  return out;
+}
+
+// Prevent retriggering effects after re-parse (clicking Submit, or outermost bracket)
+function PreventTransitionRetrigger(style, bladeObj, index = {v:0}) {
+  if (!style) return;
+  if (style.constructor.name === "TransitionEffectLClass") {
+    for (const e of bladeObj.GetEffects()) {
+      if (e.type === style.EFFECT.getInteger(0)) {
+        style.effect_.last_detected_ = e.start_micros;
+        break;
+      }
+    }
+  }
+  if (Array.isArray(style.args)) {
+    for (const child of style.args) {
+      index.v++;
+      PreventTransitionRetrigger(child, bladeObj, index);
     }
   }
 }
 
-
 function Run() {
   var sty = FIND("style");
   var err = FIND("error_message");
-  var str = sty.value;
+  // grab the raw text
+  var originalStr = sty.value;
+  var str = originalStr;
+
+//////////// Resolve empty WavLen<> PR ///////////
+  // Only run autoBind if there is an empty WavLen<> placeholder
+  const emptyWavLenRegex = /WavLen\s*<\s*>/;
+  if (emptyWavLenRegex.test(str)) {
+    str = autoBindWavLen(str);
+    str = autoBindWavLenInOutTrL(str);
+    // write it back so the textarea updates
+    sty.value = str;
+  }
+
   var parser = new Parser(str,
                           classes,
                           identifiers);
   err.innerHTML = "";
   try {
     current_style = parser.parse();
+    PreventTransitionRetrigger(current_style, blade);
   }
   catch(e) {
     console.log(e);
     console.log(e.stack);
     console.log(typeof(e));
     if (typeof(e) == "string") {
+//////////// indents and line returns PR ///////////
       err.innerHTML = e;
       sty.focus();
       sty.setSelectionRange(parser.pos, parser.pos);
@@ -8326,10 +8751,16 @@ function Run() {
     } else {
       throw e;
     }
+//////////// indents and line returns PR ///////////
   }
   ReplaceCurrentFocus(str);
   compile();
+//////////// Lockup Dropdown tweaks PR ///////////
+  STATE_LOCKUP = LOCKUP_NONE;
+  updateLockupDropdown();
+
   if (current_style.argstring) {
+//////////// missing semicolon PR ///////////
     FIND("ARGSTR").value = "builtin 0 1 " + current_style.argstring;
     ArgStringChanged();
   }
@@ -8387,6 +8818,8 @@ function ArgChanged(ARG) {
   var N = ArgumentName_ENUM_BUILDER.value_to_name[ARG];
   var tag = FIND("ARGSTR_"+N);
   setARG(ARG, tag.value);
+//////////// Logging PR ///////////////
+  console.log("Updated " + N + " : " + tag.value)
 }
 
 function IncreaseArg(ARG, I) {
@@ -8394,6 +8827,8 @@ function IncreaseArg(ARG, I) {
   var tag = FIND("ARGSTR_"+N);
   tag.value = parseInt(tag.value) + I;
   setARG(ARG, tag.value);
+//////////// Logging PR ///////////////
+  console.log("Updated " + N + " : " + tag.value)
 }
 
 function ClickArgColor(ARG) {
@@ -8413,7 +8848,8 @@ function PopState(event) {
 }
 
 function SetTo(str) {
-  console.log(str);
+//////////// Logging PR ///////////////
+  // console.log("Style SetTo:\n", str);
   var old = FIND("style").value;
   var url = new URL(window.location.href);
   url.searchParams.set("S", str);
@@ -8427,36 +8863,65 @@ function SetTo(str) {
   Run();
 }
 
-function SetToAndFormat(str) {
+////////////////  TAB MANIA PR /////////////////
+function SetToAndFormat(str, event) {
   var parser = new Parser(str, classes, identifiers);
   var style = parser.parse();
   pp_is_url++;
   var url = style.pp();
   pp_is_url--;
   SetTo(url);
+
+  // If the clicked element is a button in either the "Examples" or "History" tab, enable all tabs
+  if (event && (event.target.closest('.example-tabcontent') || event.target.closest('.history-tabcontent'))) {
+    enableTabs();
+  }
 }
+////////////////  TAB MANIA PR /////////////////
 
 function FocusOnLow(id) {
   console.log("FOCUSON: " + id);
   var style = style_ids[id];
-  console.log(id);
-  console.log(style);
+//////////// Logging PR ///////////////
+  console.log("style_ids[" + id + "] =", style);
   current_focus = style;
   var container = FIND("X"+id);
   console.log(container);
-  container.style.backgroundColor = 'lightblue';
+//////////// CSS PR ///////////////
+  // MOVED TO CSS container.style.backgroundColor = 'lightblue';
   pp_is_url++;
   var url = style.pp();
   pp_is_url--;
-  console.log(url);
+//////////// Logging PR ///////////////
+  // console.log("pp URL =", url);
   current_focus_url = url;
   SetTo(url);
+//////////// SOUND1 PR ///////////////
+  FocusCheck();
   return true;
 }
 
 function FocusOn(id, event) {
   event.stopPropagation();
   FocusOnLow(id);
+}
+
+//////////// SOUND1 PR ///////////////
+function FocusCheck() {
+  // Detect whether this is the top-level in structured view.
+  const outerMostBracket = (!current_focus || (current_focus.constructor.name === "LayersClass"));
+  // console.log('[FocusCheck] outerMostBracket = ' + outerMostBracket);
+  if (outerMostBracket) {
+    focusAllowsHum = true;
+    if (STATE_ON) {
+      // console.log("[FocusCheck] resumeLoops()");
+      resumeLoops();
+    }
+  } else {
+    // console.log("[FocusCheck] stopAllLoops()");
+    stopAllLoops(200, false);
+    focusAllowsHum = false;
+  }
 }
 
 function ClickRotate() {
@@ -8466,29 +8931,220 @@ function ClickRotate() {
   console.log("ROTATE");
 }
 
+//////////// BC ///////////
+
+var power_button = FIND("POWER_BUTTON");
+/*
+Compute delay for triggering ignition/postoff.
+For ignition delay, use preon sound duration (or global WavLen value)
+For POSTOFF delay, use IN_TR total time.
+*/
 function ClickPower() {
-  STATE_ON = !STATE_ON; STATE_LOCKUP=0;
-  var power_button = FIND("POWER_BUTTON");
-  power_button.classList.toggle("button-latched", STATE_ON ? true : false);
+  // Debounce
+  if (ClickPower._debounced) {
+    return;
+  }
+  ClickPower._debounced = true;
+  setTimeout(() => { ClickPower._debounced = false; }, 400);
   console.log("POWER");
-  blade.addEffect(STATE_ON ? EFFECT_IGNITION : EFFECT_RETRACTION, Math.random() * 0.7 + 0.2);
+  stopAllLoops(200, true);  // Power button used: clear lockup state
+
+  STATE_LOCKUP=0;
+  updateLockupDropdown();
+
+  if (!STATE_ON && !STATE_WAIT_FOR_ON) {
+    STATE_WAIT_FOR_ON = true;
+    const preonBuffers = pickLoopBuffers('preon');
+    let ignitionDelay = 0;
+    if (preonBuffers.length) {
+      blade.addEffect(EFFECT_PREON, 0.0);
+      let idx = lastPlayedSoundIndex['preon'];
+      if (typeof idx !== 'number' || idx >= preonBuffers.length) idx = 0;
+      ignitionDelay = Math.round(preonBuffers[idx].duration * 1000);
+      console.log(`Delaying ignition by ${ignitionDelay} ms (preon.wav length)`);
+    }
+
+    // Store ignition timer for possible cancellation
+    if (ClickPower._pendingIgnite) clearTimeout(ClickPower._pendingIgnite);
+    ClickPower._pendingIgnite = setTimeout(() => {
+      STATE_WAIT_FOR_ON = false;
+      STATE_ON = true;
+      // Ignite and start hum
+      requestAnimationFrame(updateSmoothSwingGains)
+      blade.addEffect(EFFECT_IGNITION, Math.random() * 0.7 + 0.2);
+      setTimeout(() => {
+        // Only start hum if still powered on!
+        if (focusAllowsHum) {
+          startHum();
+        } else {
+          console.log('[ClickPower] Not focused full. not starting hum.');
+        }
+      }, 200);  // pseudo ProffieOSHumDelay hardcoded
+
+      ClickPower._pendingIgnite = null;
+    }, ignitionDelay);
+
+    power_button.classList.toggle("button-latched", true);
+
+  } else if (STATE_WAIT_FOR_ON) {
+    // User turned OFF during preon: cancel ignition!
+    if (ClickPower._pendingIgnite) {
+      clearTimeout(ClickPower._pendingIgnite);
+      ClickPower._pendingIgnite = null;
+    }
+    STATE_WAIT_FOR_ON = false;
+    STATE_ON = false;
+    power_button.classList.toggle("button-latched", false);
+    console.log('[ClickPower().STATE_WAIT_FOR_ON] Power turned off during preon. Just returning to OFF state.');
+    return;
+  } else {
+    STATE_ON = 0;
+    power_button.classList.toggle("button-latched", false);
+    blade.addEffect(EFFECT_RETRACTION, Math.random() * 0.7 + 0.2);
+    stopAllLoops(200, true);  // Power button used: clear lockup state
+    let styleDelay = 0;
+
+    if (Array.isArray(current_style.LAYERS)) {
+      const inout = current_style.LAYERS.find(
+        l => l.constructor?.name === 'InOutTrLClass'
+      );
+      if (inout?.IN_TR) {
+        // Recursively sum up all transition durations.
+        const getDur = n => {
+          if (n.constructor && n.constructor.name === 'WavLenClass') {
+            return Number(n.getInteger(0));
+          }
+          if (n.MILLIS) {
+            return Number(n.MILLIS.getInteger(0));
+          }
+          if (n.args) {
+            if (!Array.isArray(n.args)) {
+              console.warn('getDur: Non-array args:', n, 'n.args:', n.args);
+            }
+            // Convert to array and reduce, always
+            return [...n.args].reduce((sum, a) => sum + getDur(a), 0);
+          }
+          return 0;
+        };
+        styleDelay = getDur(inout.IN_TR);
+      }
+    }
+    const postoffBuffers = pickLoopBuffers('pstoff');
+    if (postoffBuffers.length) {
+      console.log(`Scheduling POSTOFF in ${styleDelay} ms`);
+      setTimeout(() => { blade.addEffect(EFFECT_POSTOFF, 0.0); }, styleDelay);
+    }
+  }
 }
 
 var lockups_to_event = {};
-lockups_to_event[LOCKUP_NORMAL] = [ EFFECT_LOCKUP_BEGIN, EFFECT_LOCKUP_END ];
-lockups_to_event[LOCKUP_DRAG] = [ EFFECT_DRAG_BEGIN, EFFECT_DRAG_END ];
+lockups_to_event[LOCKUP_NORMAL]          = [ EFFECT_LOCKUP_BEGIN, EFFECT_LOCKUP_END ];
+lockups_to_event[LOCKUP_DRAG]            = [ EFFECT_DRAG_BEGIN, EFFECT_DRAG_END ];
+lockups_to_event[LOCKUP_MELT]            = [EFFECT_MELT_BEGIN, EFFECT_MELT_END];
+lockups_to_event[LOCKUP_LIGHTNING_BLOCK] = [EFFECT_LB_BEGIN, EFFECT_LB_END];
+
+// Reverse mapping bgn->lockup
+function lockupTypeForEffect(effect) {
+  for (const lockupType in lockups_to_event) {
+    if (lockups_to_event[lockupType][0] === effect) {
+      return Number(lockupType);  // make sure it’s a number
+    }
+  }
+  return undefined;
+}
 
 function OnLockupChange() {
   console.log("OnLockupChange");
   var select = FIND("LOCKUP");
   var old = STATE_LOCKUP;
   STATE_LOCKUP = window[select.value];
+  window.currentLockupType = STATE_LOCKUP;
+
+  // Check: If choosing a lockup that’s NOT allowed, bail and reset
+    const allowedLockups = new Set(
+    Array.from(getAllowedEventsFromStyleText())
+      .filter(x => LOCKUP_ENUM_BUILDER.value_to_name.hasOwnProperty(x))
+  );
+
+  if (STATE_LOCKUP !== LOCKUP_NONE && !allowedLockups.has(STATE_LOCKUP)) {
+    console.log("No", lockupNameFromValue(STATE_LOCKUP), "in the blade style, resetting dropdown.");
+    STATE_LOCKUP = LOCKUP_NONE;
+    window.currentLockupType = null;
+    select.value = "LOCKUP_NONE";
+    updateLockupDropdown();
+    return;
+  }
+  updateLockupDropdown();
+  // Trigger bgnlock
   if (STATE_LOCKUP && lockups_to_event[STATE_LOCKUP]) {
     blade.addEffect(lockups_to_event[STATE_LOCKUP][0], Math.random() * 0.7 + 0.2);
+  // "Stop" chosen, trigger endlock
   } else if (old && lockups_to_event[old]) {
     blade.addEffect(lockups_to_event[old][1], Math.random() * 0.7 + 0.2);
   }
 }
+
+function updateLockupDropdown() {
+  const lockupSelect = FIND("LOCKUP");
+  lockupSelect.innerHTML = "";
+
+  // Get allowed lockup types from style code
+  const allowedLockups = new Set(
+    Array.from(getAllowedEventsFromStyleText())
+      .filter(x => LOCKUP_ENUM_BUILDER.value_to_name.hasOwnProperty(x))
+  );
+
+// Silently stop loop if no lockup is selected
+if ((!STATE_LOCKUP || STATE_LOCKUP === LOCKUP_NONE) && window.lockupLoopSrc) {
+  window.lockupLoopSrc.stop();
+  window.lockupLoopSrc.disconnect();
+  window.lockupLoopSrc = null;
+  if (window.lockupGainNode) {
+    window.lockupGainNode.disconnect();
+    window.lockupGainNode = null;
+  }
+  window.currentLockupType = null;
+}
+  // Map value to display label
+  const lockupLabels = {
+    [LOCKUP_NORMAL]: "Lockup",
+    [LOCKUP_DRAG]: "Drag",
+    [LOCKUP_MELT]: "Melt",
+    [LOCKUP_LIGHTNING_BLOCK]: "LB"
+    // Add more here if needed
+  };
+
+  if (!STATE_LOCKUP || STATE_LOCKUP === LOCKUP_NONE) {
+    lockupSelect.appendChild(new Option("Choose Lockup", "LOCKUP_NONE"));
+    const lockupTypeNames = {
+      [LOCKUP_NORMAL]: "LOCKUP_NORMAL",
+      [LOCKUP_DRAG]: "LOCKUP_DRAG",
+      [LOCKUP_MELT]: "LOCKUP_MELT",
+      [LOCKUP_LIGHTNING_BLOCK]: "LOCKUP_LIGHTNING_BLOCK"
+    };
+
+    const outerMostBracket = (!current_focus || (current_focus.constructor.name === "LayersClass"));
+    let optionsAdded = 0;
+    for (const lockupType of [LOCKUP_NORMAL, LOCKUP_DRAG, LOCKUP_MELT, LOCKUP_LIGHTNING_BLOCK]) {
+      // If at top-level, show ALL lockups.
+      // If focused in, show ONLY the selected lockup.
+      if (outerMostBracket || allowedLockups.has(lockupType)) {
+        lockupSelect.appendChild(new Option(
+          lockupLabels[lockupType],
+          lockupTypeNames[lockupType]
+        ));
+      }
+    }
+    lockupSelect.value = "LOCKUP_NONE";
+  } else {
+    const stopOption = new Option("Stop", "LOCKUP_NONE");
+    lockupSelect.appendChild(stopOption);
+    lockupSelect.value = "LOCKUP_NONE";
+    lockupSelect.options[0].text = "\u00A0\u00A0\u00A0\u00A0End Lockup \u00A0";
+    lockupSelect.appendChild(new Option("\u00A0\u00A0\u00A0\u00A0Stop", "LOCKUP_NONE"));
+  }
+}
+//////////// BC ///////////
 
 function ClickLockup() {
   STATE_LOCKUP = STATE_LOCKUP == LOCKUP_NORMAL ? 0 : LOCKUP_NORMAL;
@@ -8523,14 +9179,23 @@ function ClickSave() {
 var num_alternatives = 1000;
 
 function Alt() {
-  return parseInt(FIND("ALT").value);
+  return parseInt(FIND("ALT_VALUE").value);
+}
+//////////// SafeguardInputs PR ///////////////
+function updateAltValue(newValue) {
+  if (newValue > num_alternatives) {
+    newValue = num_alternatives;
+  }
+  FIND("ALT_VALUE").value = newValue;
+  console.log("Updated Alt: " + newValue);
 }
 
 function IncreaseAlt(n) {
   var v = Alt() + n;
   if (v < 0) v += num_alternatives;
   if (v > num_alternatives) v -= num_alternatives;
-  FIND("ALT").value = v;
+  FIND("ALT_VALUE").value = v;
+  console.log("Updated Alt: " + v)
 }
 
 function Variant() {
@@ -8540,6 +9205,7 @@ function Variant() {
 /* Variant Slider functions */
 
 function updateVariantValue(newValue) {
+  // Ensure values are in range, and auto-filled zeros get registered as 0.
   if (newValue < 0) {
     newValue = 0;
   } else if (newValue > 32768) {
@@ -8668,12 +9334,25 @@ function DoArgify() {
   SetTo(tmp);
 }
 
+////////////////  TAB MANIA PR /////////////////
+// Tab mania.
+const allTabs = ["color", "rgb", "layer", "function", "transition", "effect", "lockup_type", "arguments", "example"];  // don't include History or argString
+// The "color group" are the 3 tabs that contain valid replacements for a COLOR.
+const colorGroup = ["color", "rgb", "layer"];
+var wasTabClicked = false;
+var allTabsEnabled = true;
+var currentTab;
+
 function AddTab(tab, name, contents) {
-  FIND("TABLINKS").innerHTML += "<button id="+tab+"_tab class=tablinks onclick=\"ActivateTab('"+tab+"')\">" + name + "</button>";
+  FIND("TABLINKS").innerHTML += "<button id=" + tab + "_tab class=tablinks onclick=\"TabClicked('"+tab+"');\">" + name + "</button>";
   FIND("TABBODIES").innerHTML += "<div id=" + tab + "_tabcontent class='tabcontent " + tab + "-tabcontent'></div>";
   if (contents) {
     AddTabContent(tab, contents);
   }
+}
+
+function TabClicked(tab) {
+  ActivateTab(tab, false);
 }
 
 function AddTabContent(tab, data) {
@@ -8710,160 +9389,262 @@ function updateRgbTabContent() {
     "<input type='color' id='COLOR' value='#ff0000' class='color-picker' onclick='ClickColor()' /></div>");
 }
 
-function ActivateTab(tab) {
-  if(!FIND(tab+"_tab")) {
+var tablinks = document.getElementsByClassName("tablinks");
+
+function enableTabs() {
+  for (var i = 0; i < tablinks.length; i++) {
+    tablinks[i].classList.remove("disabled");
+    tablinks[i].disabled = false;
+  }
+  allTabsEnabled = true;
+}
+
+// Enable all tabs on page load - needs time to let tabs load
+window.addEventListener("load", function () {
+  setTimeout(function () {
+    enableTabs();
+  }, 0);
+});
+
+// Have non-applicable tabs be disabled, similar to how History works.
+function ActivateTab(tab, fromStructuredView = false) {
+  if (!FIND(tab + "_tab")) {
     console.log("No such tab");
     return;
   }
   // Get all elements with class="tabcontent" and hide them
-  var tabcontent = document.getElementsByClassName("tabcontent");
-  for (var i = 0; i < tabcontent.length; i++) {
-    tabcontent[i].style.display = "none";
+  const tabcontent = document.querySelectorAll('.tabcontent');
+  tabcontent.forEach(tc => tc.style.display = "none");
+
+  // Get all elements with class="tablinks" and make available.
+  const tablinks = document.querySelectorAll('.tablinks');
+  tablinks.forEach(btn => {
+    btn.className = btn.className.replace(" active", "").replace(" disabled", "");
+    btn.disabled = false;
+  });
+
+  // Show current tab & set active
+  FIND(tab + "_tabcontent").style.display = "block";
+  const activeTab = FIND(tab + "_tab");
+  activeTab.classList.add("active");
+
+  // If clicking already-active tab (user), unlock all
+  if (activeTab.classList.contains("active") && !fromStructuredView) {
+    enableTabs();
+    return;
   }
 
-  // Get all elements with class="tablinks" and remove the class "active"
-  var tablinks = document.getElementsByClassName("tablinks");
-  for (var i = 0; i < tablinks.length; i++) {
-    tablinks[i].className = tablinks[i].className.replace(" active", "");
+  // Figure out which tabs should be enabled:
+  let validTabs;
+  if (colorGroup.includes(tab)) {
+    validTabs = colorGroup.concat("history", "arg_string");
+  } else {
+    validTabs = [tab, "history", "arg_string"];
   }
 
-  // Show the current tab, and add an "active" class to the button that opened the tab
-  FIND(tab+"_tabcontent").style.display = "block";
-  FIND(tab+"_tab").className += " active";
+  // Disable everything except valid tabs
+  tablinks.forEach(btn => {
+    const btnTab = btn.id.replace("_tab", "");
+    if (!validTabs.includes(btnTab)) {
+      btn.classList.add("disabled");
+      btn.disabled = true;
+    }
+  });
 }
+////////////////  TAB MANIA PR /////////////////
 
-
-// Get the menu and button elements
+////////////// Recent EFFECTS PR ///////////
 const menu = FIND('more_effects_menu');
 const do_selected_button = FIND('do_selected');
+let recentEffects = [EFFECT_NONE];
+const MAX_RECENTS = 5;
 
-/* Add values from the enum builder to an array and sort alphabetically,
-excluding effects with dedicated buttons.*/
-const values = Object.entries(EFFECT_ENUM_BUILDER.value_to_name)
-  .sort((a, b) => a[1].localeCompare(b[1]))
-  .filter(([value]) => ![
-    EFFECT_CLASH,
-    EFFECT_STAB,
-    EFFECT_BLAST,
-    EFFECT_FORCE,
-    EFFECT_BOOT,
-    EFFECT_NEWFONT,
-    EFFECT_PREON,
-  ].includes(Number(value)));
+// Get the menu and button elements
+function rebuildMoreEffectsMenu() {
+  const currentValue = typeof selectedValue !== 'undefined'
+    ? selectedValue
+    : menu.value;
+  menu.innerHTML = '';
+  // Only show placeholder if nothing is currently selected
+  if (!currentValue || currentValue === '') {
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Select More Effects';
+    placeholder.disabled = false;
+    placeholder.selected = true;
+    menu.appendChild(placeholder);
+  }
 
-// Add sub-groups for the different categories of effects
-const generalEffectsMenu = document.createElement('optgroup');
-generalEffectsMenu.label = 'General Effects';
-const userEffectsMenu = document.createElement('optgroup');
-userEffectsMenu.label = 'User Effects';
-const blasterEffectsMenu = document.createElement('optgroup');
-blasterEffectsMenu.label = 'Blaster Effects';
-const gameEffectsMenu = document.createElement('optgroup');
-gameEffectsMenu.label = 'Game Effects';
-const errorMessagesMenu = document.createElement('optgroup');
-errorMessagesMenu.label = 'Error Messages';
+  // Add sub-groups for the different categories of effects
+  const recentEffectsMenu  = document.createElement('optgroup');
+  recentEffectsMenu.label  = 'Recent Effects';
+  const generalEffectsMenu = document.createElement('optgroup');
+  generalEffectsMenu.label = 'General Effects';
+  const userEffectsMenu    = document.createElement('optgroup');
+  userEffectsMenu.label    = 'User Effects';
+  const blasterEffectsMenu = document.createElement('optgroup');
+  blasterEffectsMenu.label = 'Blaster Effects';
+  const gameEffectsMenu    = document.createElement('optgroup');
+  gameEffectsMenu.label    = 'Game Effects';
+  const errorMessagesMenu  = document.createElement('optgroup');
+  errorMessagesMenu.label  = 'Error Messages';
 
-// Add sorted values to the menu and actions dictionary,
-for (const [value, name] of values) {
-  const nameWithoutEffect = name.replace(/^EFFECT_/, '');
-  const option = document.createElement('option');
-  option.value = value;
-  option.text = nameWithoutEffect;
+  // Add recent effects to the recentEffectsMenu optgroup
+  // Always add Recents at the top (even if only EFFECT_NONE)
+  recentEffects.forEach(type => {
+    const name = EFFECT_ENUM_BUILDER.value_to_name[type] || `EFFECT_${type}`;
+    const nameWithoutEffect = name.replace(/^EFFECT_/, '');
+    const option = document.createElement('option');
+    option.value = type;
+    option.text = nameWithoutEffect;
+    recentEffectsMenu.appendChild(option);
+  });
 
-  // Check if the effect belongs to a certain category and add it to the corresponding sub-group
-  if (name.startsWith('EFFECT_GAME')) {
-    gameEffectsMenu.appendChild(option);
-  } else if (name.startsWith('EFFECT_USER')) {
-    userEffectsMenu.appendChild(option);
-  } else {
-    switch (Number(value)) {
-      case EFFECT_STUN:
-      case EFFECT_FIRE:
-      case EFFECT_CLIP_IN:
-      case EFFECT_CLIP_OUT:
-      case EFFECT_RELOAD:
-      case EFFECT_MODE:
-      case EFFECT_RANGE:
-      case EFFECT_EMPTY:
-      case EFFECT_FULL:
-      case EFFECT_JAM:
-      case EFFECT_UNJAM:
-      case EFFECT_PLI_ON:
-      case EFFECT_PLI_OFF:
-        blasterEffectsMenu.appendChild(option);
-        break;
-      case EFFECT_ERROR_IN_BLADE_ARRAY:
-      case EFFECT_ERROR_IN_FONT_DIRECTORY:
-      case EFFECT_FONT_DIRECTORY_NOT_FOUND:
-      case EFFECT_SD_CARD_NOT_FOUND:
-      case EFFECT_LOW_BATTERY:
-        errorMessagesMenu.appendChild(option);
-        break;
-      default:
-        generalEffectsMenu.appendChild(option);
-        break;
+  // List of EFFECTs to hide from dropdown (pseudo/future events)
+  const hiddenEffects = [
+    "EFFECT_MELT_BEGIN",
+    "EFFECT_MELT_END",
+    "EFFECT_LB_BEGIN",
+    "EFFECT_LB_END"
+  ];
+
+  /* Add values from the enum builder to an array and sort alphabetically,
+  excluding effects with dedicated buttons.*/
+  const values = Object.entries(EFFECT_ENUM_BUILDER.value_to_name)
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .filter(([value]) => ![
+      EFFECT_CLASH,
+      EFFECT_STAB,
+      EFFECT_BLAST,
+      EFFECT_FORCE,
+      EFFECT_ACCENT_SWING,
+    ].includes(Number(value)));
+
+  // Add sorted values to the menu and actions dictionary,
+  for (const [value, name] of values) {
+    if (Number(value) === EFFECT_NONE) continue;
+    const nameWithoutEffect = name.replace(/^EFFECT_/, '');
+    const option = document.createElement('option');
+    option.value = value;
+    option.text = nameWithoutEffect;
+
+    // Check if the effect belongs to a certain category and add it to the corresponding sub-group
+    if (name.startsWith('EFFECT_GAME')) {
+      gameEffectsMenu.appendChild(option);
+    } else if (name.startsWith('EFFECT_USER')) {
+      userEffectsMenu.appendChild(option);
+    } else {
+      switch (Number(value)) {
+        case EFFECT_BOOM:
+        case EFFECT_STUN:
+        case EFFECT_FIRE:
+        case EFFECT_CLIP_IN:
+        case EFFECT_CLIP_OUT:
+////////// Add DESTRUCT PR /////////////////
+        case EFFECT_DESTRUCT:
+        case EFFECT_RELOAD:
+        case EFFECT_MODE:
+        case EFFECT_RANGE:
+        case EFFECT_EMPTY:
+        case EFFECT_FULL:
+        case EFFECT_JAM:
+        case EFFECT_UNJAM:
+        case EFFECT_PLI_ON:
+        case EFFECT_PLI_OFF:
+          blasterEffectsMenu.appendChild(option);
+          break;
+        case EFFECT_ERROR_IN_BLADE_ARRAY:
+        case EFFECT_ERROR_IN_FONT_DIRECTORY:
+        case EFFECT_FONT_DIRECTORY_NOT_FOUND:
+        case EFFECT_SD_CARD_NOT_FOUND:
+        case EFFECT_LOW_BATTERY:
+          errorMessagesMenu.appendChild(option);
+          break;
+        default:
+          generalEffectsMenu.appendChild(option);
+          break;
+      }
     }
   }
-}
 
-// Add the sub-groups to the main menu
-menu.appendChild(generalEffectsMenu);
-menu.appendChild(userEffectsMenu);
-menu.appendChild(blasterEffectsMenu);
-menu.appendChild(gameEffectsMenu);
-menu.appendChild(errorMessagesMenu);
+  // Add the sub-groups to the main menu
+  menu.appendChild(recentEffectsMenu);
+  menu.appendChild(generalEffectsMenu);
+  menu.appendChild(userEffectsMenu);
+  menu.appendChild(blasterEffectsMenu);
+  menu.appendChild(gameEffectsMenu);
+  menu.appendChild(errorMessagesMenu);
 
-// Set up the event listener for the menu
-menu.addEventListener('change', function() {
+  // After populating options, set initial button state based on selection
   // If the selected value is not the default, enable the button and set its action
-  if (menu.value !== '') {
-    do_selected_button.disabled = false;
-    do_selected_button.className = "button-on"
-    do_selected_button.onclick = function() {
-      AddClickedEffect();
-    };
-  } else {
-    // If the selected value is the default, disable the button
-    do_selected_button.disabled = true;
-    do_selected_button.onclick = null;
-    do_selected_button.className = "button-off"
-  }
-});
-// Disable the button initially
-do_selected_button.disabled = true;
-do_selected_button.className = "button-off"
+  updateDoSelectedButtonState(menu, do_selected_button);
+}
 
 // What to do when preview saber area is clicked
 function AddClickedEffect() {
+  const raw = menu.value;
+  const type = Number(raw);
+  const effectName = EFFECT_SOUND_MAP[type] || raw;
+
+  // Update recents
+  if (type && !recentEffects.includes(type)) {
+    recentEffects.unshift(type);
+    if (recentEffects.length > MAX_RECENTS) recentEffects.length = MAX_RECENTS;
+  } else if (type) {
+    // Move to top if already in the list
+    recentEffects = [type, ...recentEffects.filter(t => t !== type)];
+  }
+
+  rebuildMoreEffectsMenu();  
   if (do_selected_button.disabled) {
     AddClash();
   } else {
-    blade.addEffect(menu.value, 0.0)
-  }
-};
-
-function toggleSettingsPanel() {
-  var settingsButton = FIND("SETTINGS_BUTTON");
-  var settingsPanel = FIND("settings_panel");
-
-  settingsPanel.classList.toggle("show");
-
-  // Mouseleave event listener
-  if (settingsPanel.classList.contains("show")) {
-    var timeoutId = null;
-    settingsPanel.addEventListener("mouseleave", function(e) {
-      timeoutId = setTimeout(function() {
-        settingsPanel.classList.remove("show");
-      }, 1000);
-    });
-    settingsPanel.addEventListener("mouseenter", function(e) {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-    });
+    blade.addEffect(type, 0.0,);
   }
 }
+
+function updateDoSelectedButtonState(menu, button) {
+  if (menu.value !== "") {
+    button.disabled = false;
+    button.className = "button-on";
+    button.onclick   = AddClickedEffect;
+  } else {
+    button.disabled = true;
+    button.onclick   = null;
+    button.className = "button-off";
+  }
+}
+
+menu.addEventListener('change', function() {
+  updateDoSelectedButtonState(menu, do_selected_button);
+});
+////////////// Recent EFFECTS PR ///////////
+
+//////////// SafeguardInputs PR ///////////////
+const settingsPanel  = FIND('settings_panel');
+const settingsButton = FIND('SETTINGS_BUTTON');
+
+function toggleSettingsPanel() {
+  if (document.querySelector('input.invalid')) {
+    console.log('*** INVALID INPUT - Not closing panel.');
+    return;
+  }
+  settingsPanel.classList.toggle('show');
+}
+
+// Click outside to close Settings Panel
+document.body.addEventListener('click', function(e) {
+  if (document.querySelector('input.invalid')) {
+    console.log('*** INVALID INPUT - Not closing panel.');
+    return;
+  }
+  if (settingsPanel.classList.contains('show') &&
+      !settingsPanel.contains(e.target) &&
+      e.target !== settingsButton) {
+    settingsPanel.classList.remove('show');
+  }
+});
+//////////// SafeguardInputs PR ///////////////
 
 // Call the onPageLoad function when the page is loaded
 window.addEventListener('DOMContentLoaded', onPageLoad);
@@ -8872,16 +9653,15 @@ var all_saved_states = [];
 var state_by_checkbox = new Map();
 var body = document.querySelector("body");
 var structuredView;
+//////////////// WAVLEN PR /////////////////
+var wavlenInput = FIND("WAVLEN_VALUE");
+var myWavLen = new WavLenClass();
 
 /* Settings buttons saved as local storage */
 function getSavedState(buttonState, defaultValue) {
   var value = localStorage.getItem(buttonState);
   console.log("Retrieved SavedState for " + buttonState + ": " + value);
-
-  if (value === null) {
-    return defaultValue;
-  }
-  return value !== "false";
+  return (value === null ? defaultValue : value);
 }
 
 function saveState(buttonState, settingIsOn) {
@@ -8894,27 +9674,49 @@ class SavedState {
     this.def = def;
     this.update_function = update_function;
     all_saved_states.push(this);
-    const checkbox = FIND(this.name.toUpperCase()+"_BUTTON");
-    state_by_checkbox.set(checkbox, this);
-}
+  }
   onload() {
     this.set(getSavedState(this.name + "Save", this.def));
-  }
-  set(value) {
-    this.value = value;
-    FIND(this.name.toUpperCase()+"_BUTTON").checked = value ? true : false;
-    saveState(this.name+"Save", value);
-    this.update_function(value);
   }
   get() { return this.value; }
 }
 
-var darkState = new SavedState("dark", false, (on) => {
+class SavedStateBool extends SavedState {
+  constructor(name, def, update_function) {
+    super(name, def, update_function);
+    // For checkboxes, store the mapping for use in handleSettings().
+    const checkbox = FIND(name.toUpperCase() + "_BUTTON");
+    state_by_checkbox.set(checkbox, this);
+  }
+  set(value) {
+    const boolValue = (value === true || value === "true");
+    const prev = this.value;
+    this.value = boolValue;
+    FIND(this.name.toUpperCase() + "_BUTTON").checked = boolValue;
+    saveState(this.name + "Save", boolValue);
+    this.update_function(boolValue);
+  }
+}
+
+class SavedStateNumber extends SavedState {
+  constructor(name, def, update_function) {
+    super(name, def, update_function);
+  }
+  set(value) {
+    this.value = value;
+    FIND(this.name.toUpperCase() + "_VALUE").value = value;
+    saveState(this.name + "Save", value);
+    this.update_function(value);
+  }
+}
+//////////////// WAVLEN PR /////////////////
+
+var darkState = new SavedStateBool("dark", false, (on) => {
   body.classList.toggle("dark-mode", on);
   structuredView.classList.toggle("dark-mode", on);
 });
 
-var tipsState = new SavedState("tips", true, (on) => { 
+var tipsState = new SavedStateBool("tips", true, (on) => {
  if (on) {
     const elementsWithDataTitles = document.querySelectorAll("[data-title]");
     elementsWithDataTitles.forEach((element) => {
@@ -8929,16 +9731,60 @@ var tipsState = new SavedState("tips", true, (on) => {
     });
   }
 });
-var colorsortState = new SavedState("colorsort", false, (on) => {
+var colorsortState = new SavedStateBool("colorsort", false, (on) => {
   updateRgbTabContent();
 });
-var graflexState = new SavedState("graflex", true, (on) => { compile(); });
-var mouseswingsState = new SavedState("mouseswings", false, (on) => {});
-var autoswingState = new SavedState("autoswing", true, (on) => {});
-var inhiltState = new SavedState("inhilt", false, (on) => { STATE_NUM_LEDS = on ? 1 : 144; });
-var slowState = new SavedState("slow", false, (on) => { framesPerUpdate = on ? 10 : 0; time_factor = framesPerUpdate == 0 ? 1000 : (500/framesPerUpdate)});
-var benchmarkState = new SavedState("benchmark", false, (on) => { AA=1; compile(); FIND("error_message").innerHTML = ""; });
+var backgroundState = new SavedStateBool("background", true, (on) => {
+  window.showBackground = on;
+  if (window.bgPlane) window.bgPlane.visible = !!on;
+});
+var mouseswingsState = new SavedStateBool("mouseswings", false, (on) => {});
+var bladetrailsState = new SavedStateBool("bladetrails", true, (on) => { window.showBladeTrails = on; });
+var autoswingState = new SavedStateBool("autoswing", true, (on) => {});
+var inhiltState = new SavedStateBool("inhilt", false, (on) => { STATE_NUM_LEDS = on ? 1 : 144; });
+var slowState = new SavedStateBool("slow", false, (on) => { framesPerUpdate = on ? 10 : 0; time_factor = framesPerUpdate == 0 ? 1000 : (500/framesPerUpdate)});
+var benchmarkState = new SavedStateBool("benchmark", false, (on) => { AA=1; compile(); FIND("error_message").innerHTML = ""; });
+//////////////// WAVLEN PR /////////////////
+var wavlenState = new SavedStateNumber("wavlen", 500, (value) => {
+  myWavLen.setLength(value);
+});
+wavlenInput.addEventListener("focusout", function(e) {
+  ValidateInput(e);
+  if (!e.target.classList.contains('invalid')) {
+    wavlenState.set(Number(e.target.value));
+  }
+});
 
+//////////////// SOUND2 PR /////////////////
+var soundOnState = new SavedStateBool("sound", true, (on) => {
+  soundOn = on;
+  const icon = FIND("sound-toggle-icon");
+  if (on) {
+    icon.classList.remove("fa-volume-off");
+    icon.classList.add("fa-volume-high");
+  } else {
+    icon.classList.remove("fa-volume-high");
+    icon.classList.add("fa-volume-off");
+  }
+
+  if (!on) {
+    console.log('Sound turned OFF → stopping all loops');
+    stopAllLoops(200, false);  // Sound off button used: do NOT clear lockup state
+  } else {
+    console.log('Sound turned ON → resuming loops');
+    resumeLoops();
+  }
+});
+
+var fontfallbackState = new SavedStateBool("font_fallback",false, (on) => { useDefaultFontFallback = on; });
+
+var useFontWavLenState = new SavedStateBool("use_font_wavlen", true, (on, prev) => {
+  handleWavLenControls();
+  if (on && !prev) wavlenState.set(500);
+});
+//////////////// SOUND2 PR /////////////////
+
+//////////// Fullscreen PR ///////////
 // Create n textures of about 1MB each.
 function SetupRendering() {
   // Clear existing tab links and tab bodies before populating
@@ -8964,69 +9810,37 @@ function SetupRendering() {
 
   // Add arg string.
   var A = "";
-  A += "Arg string: <input id=ARGSTR name=arg type=input size=80 value='builtin 0 1' onchange='ArgStringChanged()' /><br><table>";
+  A += "Arg string: <input id=ARGSTR name=arg type=text size=80 value='builtin 0 1' onchange='ArgStringChanged()' /><br><table>";
   var v = Object.keys(ArgumentName_ENUM_BUILDER.value_to_name);
   for (var i = 0; i < v.length; i++) {
     var V = parseInt(v[i]);
     var N = ArgumentName_ENUM_BUILDER.value_to_name[V];
     A += "<tr><td>" + N + "</td><td>";
     if (N.search("COLOR") >= 0) {
-       A += "<input type=color id=ARGSTR_"+N+" onclick='ClickArgColor("+N+")' onchange='ClickArgColor("+N+")' >";
+      A += "<input type=color id=ARGSTR_"+N+" onclick='ClickArgColor("+N+")' onchange='ClickArgColor("+N+")' >";
     } else {
-       A += "<input type=button value='<'  onclick='IncreaseArg("+N+",-1)' >";
-       A += "<input id=ARGSTR_"+N+" type=input size=6 value=0 onchange='ArgChanged("+N+")' >";
-       A += "<input type=button value='>'  onclick='IncreaseArg("+N+",1)' >";
+      A += "<input type=button value='<'  onclick='IncreaseArg("+N+",-1)' >";
+      A += "<input id=ARGSTR_"+N+" type='text' size=6 value=0 class='nofocus' onchange='ArgChanged("+N+")' onfocusout='ValidateInput(event)' >";
+      A += "<input type=button value='>'  onclick='IncreaseArg("+N+",1)' >";
     }
     A += "</td></tr>\n";
   }
   A += "</table\n";
   AddTabContent("arg_string", A);
 
-
-  var canvas = FIND("canvas_id");
-
-  width = window.innerWidth;
-  height = window.innerHeight;
-  canvas_id.setAttribute("title", "Blade Preview.\nMove mouse to swing. Click to Clash\nor to Do Selected Effect (and to dismiss this Tooltip.)\nGoto settings to change hilt model or toggle Mouse Swings mode (swinging with mouse moves.)");
-
-  if(window.devicePixelRatio !== undefined) {
-    dpr = window.devicePixelRatio;
-  } else {
-    dpr = 1;
-  }
-
-  width = width * 2 / 3;
-  height /= 3;
-  canvas.width = width * dpr;
-  canvas.height = height * dpr;
-  canvas.style.width = width + 'px';
-  canvas.style.height = height + 'px';
-  
-  var enlargeCanvas = false;
-  FIND('ENLARGE').onclick = function() {
-    enlargeCanvas = !enlargeCanvas;
-    this.innerText = enlargeCanvas ? 'Reduce' : 'Enlarge';
-    if (enlargeCanvas) {
-      height = window.innerHeight / 2;
-    } else {
-      height = window.innerHeight / 3;
-    }
-    
-    // Update the canvas dimensions
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    canvas.style.width = width + 'px';
-    canvas.style.height = height + 'px';
-  }
+//////////// Fullscreen PR ///////////
+  window.renderer.setPixelRatio( window.devicePixelRatio || 1 );
 
   var str = new URL(window.location.href).searchParams.get("S");
   if (!str) {
-    str = "Layers<Red,ResponsiveLockupL<White,TrInstant,TrFade<100>,Int<26000>>,ResponsiveLightningBlockL<White>,ResponsiveMeltL<Mix<TwistAngle<>,Red,Yellow>>,ResponsiveDragL<White>,ResponsiveClashL<White,TrInstant,TrFade<200>,Int<26000>>,ResponsiveBlastL<White>,ResponsiveBlastWaveL<White>,ResponsiveBlastFadeL<White>,ResponsiveStabL<White>,InOutTrL<TrWipe<300>,TrWipeIn<500>>>";
+    str = "Layers<Red,InOutTrL<TrWipeX<WavLen<EFFECT_IGNITION>>,TrWipeInX<WavLen<EFFECT_RETRACTION>>,Pulsing<ElectricViolet,Black,2000>>,ResponsiveLockupL<White,TrInstant,TrFade<100>,Int<26000>>,ResponsiveLightningBlockL<White>,ResponsiveMeltL<Mix<TwistAngle<>,Red,Yellow>>,ResponsiveDragL<White>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_CLASH>>,AliceBlue,TrInstant>,EFFECT_CLASH>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_STAB>>,Cyan,TrInstant>,EFFECT_STAB>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_BLAST>>,Aquamarine,TrInstant>,EFFECT_BLAST>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_FORCE>>,Azure,TrInstant>,EFFECT_FORCE>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_BOOT>>,Bisque,TrInstant>,EFFECT_BOOT>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_NEWFONT>>,Black,TrInstant>,EFFECT_NEWFONT>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_PREON>>,BlanchedAlmond,TrInstant>,EFFECT_PREON>,TransitionEffectL<TrConcat<TrWipeInX<WavLen<EFFECT_IGNITION>>,BlinkingL<Chartreuse,Int<200>,Int<500>>,TrInstant>,EFFECT_IGNITION>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_RETRACTION>>,BlinkingL<Coral,Int<200>,Int<500>>,TrInstant>,EFFECT_RETRACTION>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_POSTOFF>>,Blue,TrInstant>,EFFECT_POSTOFF>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_DRAG_BEGIN>>,Cornsilk,TrInstant>,EFFECT_DRAG_BEGIN>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_DRAG_END>>,Cyan,TrInstant>,EFFECT_DRAG_END>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_LOCKUP_BEGIN>>,DarkOrange,TrInstant>,EFFECT_LOCKUP_BEGIN>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_LOCKUP_END>>,DeepPink,TrInstant>,EFFECT_LOCKUP_END>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_MELT_BEGIN>>,DeepSkyBlue,TrInstant>,EFFECT_MELT_BEGIN>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_MELT_END>>,FloralWhite,TrInstant>,EFFECT_MELT_END>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_LB_BEGIN>>,GhostWhite,TrInstant>,EFFECT_LB_BEGIN>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_LB_END>>,Green,TrInstant>,EFFECT_LB_END>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_CHANGE>>,GreenYellow,TrInstant>,EFFECT_CHANGE>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_BATTERY_LEVEL>>,HoneyDew,TrInstant>,EFFECT_BATTERY_LEVEL>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_VOLUME_LEVEL>>,HotPink,TrInstant>,EFFECT_VOLUME_LEVEL>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_POWERSAVE>>,Ivory,TrInstant>,EFFECT_POWERSAVE>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_BLADEIN>>,LavenderBlush,TrInstant>,EFFECT_BLADEIN>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_BLADEOUT>>,LemonChiffon,TrInstant>,EFFECT_BLADEOUT>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_ACCENT_SWING>>,LightCyan,TrInstant>,EFFECT_ACCENT_SWING>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_ACCENT_SLASH>>,Blue,TrInstant>,EFFECT_ACCENT_SLASH>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_SPIN>>,LightSalmon,TrInstant>,EFFECT_SPIN>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_ON>>,LightYellow,TrInstant>,EFFECT_ON>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_OFF>>,Magenta,TrInstant>,EFFECT_OFF>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_OFF_CLASH>>,MintCream,TrInstant>,EFFECT_OFF_CLASH>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_FAST_ON>>,MistyRose,TrInstant>,EFFECT_FAST_ON>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_FAST_OFF>>,Moccasin,TrInstant>,EFFECT_FAST_OFF>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_QUOTE>>,NavajoWhite,TrInstant>,EFFECT_QUOTE>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_NEXT_QUOTE>>,Orange,TrInstant>,EFFECT_NEXT_QUOTE>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_TRACK>>,OrangeRed,TrInstant>,EFFECT_TRACK>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_SECONDARY_IGNITION>>,PapayaWhip,TrInstant>,EFFECT_SECONDARY_IGNITION>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_SECONDARY_RETRACTION>>,PeachPuff,TrInstant>,EFFECT_SECONDARY_RETRACTION>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_INTERACTIVE_PREON>>,Pink,TrInstant>,EFFECT_INTERACTIVE_PREON>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_INTERACTIVE_BLAST>>,Red,TrInstant>,EFFECT_INTERACTIVE_BLAST>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_BEGIN_BATTLE_MODE>>,SeaShell,TrInstant>,EFFECT_BEGIN_BATTLE_MODE>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_END_BATTLE_MODE>>,Snow,TrInstant>,EFFECT_END_BATTLE_MODE>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_BEGIN_AUTO_BLAST>>,SpringGreen,TrInstant>,EFFECT_BEGIN_AUTO_BLAST>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_END_AUTO_BLAST>>,SteelBlue,TrInstant>,EFFECT_END_AUTO_BLAST>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_CLASH_UPDATE>>,Tomato,TrInstant>,EFFECT_CLASH_UPDATE>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_ALT_SOUND>>,White,TrInstant>,EFFECT_ALT_SOUND>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_TRANSITION_SOUND>>,Yellow,TrInstant>,EFFECT_TRANSITION_SOUND>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_SOUND_LOOP>>,ElectricPurple,TrInstant>,EFFECT_SOUND_LOOP>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_STUN>>,ElectricViolet,TrInstant>,EFFECT_STUN>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_FIRE>>,ElectricLime,TrInstant>,EFFECT_FIRE>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_CLIP_IN>>,Amber,TrInstant>,EFFECT_CLIP_IN>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_CLIP_OUT>>,CyberYellow,TrInstant>,EFFECT_CLIP_OUT>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_RELOAD>>,CanaryYellow,TrInstant>,EFFECT_RELOAD>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_MODE>>,PaleGreen,TrInstant>,EFFECT_MODE>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_RANGE>>,Flamingo,TrInstant>,EFFECT_RANGE>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_EMPTY>>,VividViolet,TrInstant>,EFFECT_EMPTY>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_FULL>>,PsychedelicPurple,TrInstant>,EFFECT_FULL>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_JAM>>,HotMagenta,TrInstant>,EFFECT_JAM>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_UNJAM>>,BrutalPink,TrInstant>,EFFECT_UNJAM>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_PLI_ON>>,NeonRose,TrInstant>,EFFECT_PLI_ON>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_PLI_OFF>>,VividRaspberry,TrInstant>,EFFECT_PLI_OFF>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_DESTRUCT>>,HaltRed,TrInstant>,EFFECT_DESTRUCT>,TransitionEffectL<TrConcat<TrWipeX<WavLen<EFFECT_BOOM>>,MoltenCore,TrInstant>,EFFECT_BOOM>>";
   }
   FIND("style").value = str;
 
   Run();
   DoLayerize();
+  resizeCanvasAndCamera();
+//////////// Fullscreen PR ///////////
 
   // Start the event loop.
   tick();
@@ -9034,15 +9848,109 @@ function SetupRendering() {
 
 function onPageLoad() {
   SetupRendering();
+  rebuildMoreEffectsMenu();
   structuredView = FIND("structured_view");
   all_saved_states.forEach(state => {
     state.onload();
   });
+
+  // Welcome click for unlocking audio
+  const startOverlay = FIND('start-overlay');
+  startOverlay.style.display = 'flex';
+  startOverlay.onclick = function () {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    startOverlay.style.display = 'none';
+  };
+
+  window.addEventListener('resize', resizeCanvasAndCamera);
 }
 
-function handleClick(checkbox) {
+////////////// Resize PR ///////////
+
+
+FIND('ENLARGE_BUTTON').onclick = function() {
+  window.enlargeCanvas = !window.enlargeCanvas;
+  this.innerText = window.enlargeCanvas ? 'Reduce' : 'Enlarge';
+  resizeCanvasAndCamera();
+};
+
+FIND('FULLSCREEN_BUTTON').onclick = function() {
+  if (!document.fullscreenElement) {
+    pageLeftTop.requestFullscreen();
+  } else {
+    document.exitFullscreen();
+  }
+};
+
+document.addEventListener("fullscreenchange", function() {
+  window.fullscreenActive = !!document.fullscreenElement;
+  FIND("FULLSCREEN_BUTTON").innerText = window.fullscreenActive
+    ? "Exit Fullscreen"
+    : "Fullscreen";
+  resizeCanvasAndCamera();
+});
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && document.fullscreenElement) {
+      document.exitFullscreen();
+    }
+  });
+
+
+const pageLeft = document.querySelector('.page-left');
+const splitter = FIND('splitter');
+
+let isDragging = false;
+let startX = 0;
+let startWidth = 0;
+
+splitter.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  startX = e.clientX;
+  // Always use the current width at drag start as the minimum
+  startWidth = pageLeft.offsetWidth;
+  document.body.style.cursor = 'ew-resize';
+  e.preventDefault();
+});
+
+document.addEventListener('mousemove', (e) => {
+  // At page load, .page-left is at the minimum width the user can ever shrink it to.
+  if (!isDragging) return;
+  let dx = e.clientX - startX;
+  let newWidth = startWidth + dx;
+  // Don't let it get crazy
+  const max = window.innerWidth * 0.9;
+  // limit to starting width, never smaller
+  if (newWidth < startWidth) newWidth = startWidth;
+  if (newWidth > max) newWidth = max;
+  pageLeft.style.width = newWidth + 'px';
+  // pageRight will auto-shrink due to flex
+});
+
+document.addEventListener('mouseup', () => {
+  if (isDragging) {
+    isDragging = false;
+    document.body.style.cursor = '';
+  }
+});
+
+function handleSettings(checkbox) {
   var state = state_by_checkbox.get(checkbox);
   state.set(!state.get());
+}
+
+// User can choose one or the other
+function handleWavLenControls() {
+  var wavlenLabel = document.querySelector('.wavlen-global-label');
+  var wavlenInput = FIND('WAVLEN_VALUE');
+
+  if (useFontWavLenState.get()) {
+    wavlenLabel.classList.add('disabled');
+    wavlenInput.disabled = true;
+  } else {
+    wavlenLabel.classList.remove('disabled');
+    wavlenInput.disabled = false;
+  }
 }
 
 function ClickRestore() {
