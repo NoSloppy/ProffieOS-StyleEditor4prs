@@ -10,28 +10,115 @@ import { Float32BufferAttribute } from 'three/src/core/BufferAttribute.js';
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer"
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass";
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+// import { AfterimagePass } from 'three/examples/jsm/postprocessing/AfterimagePass.js';
+
+// let origin;
+// window.origin = origin;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera( 14, window.innerWidth / window.innerHeight, 0.1, 1000 );
 camera.position.set(0, 1.6, 0);
 
+window.camera = camera;
+
+window.fullscreenActive = false;
+let normalHeight = null;
+window.enlargeCanvas = false;
+
+const pageLeft = document.querySelector('.page-left');
 var CANVAS = document.getElementById("canvas_id");
 const renderer = new THREE.WebGLRenderer( { canvas: CANVAS } );
 renderer.xr.enabled = true;
+window.renderer = renderer;
+
 //document.body.appendChild(VRButton.createButton(renderer));
 renderer.setSize( CANVAS.clientWidth, CANVAS.clientHeight );
 //document.body.appendChild( renderer.domElement );
 
-function resizeRendererToDisplaySize(renderer) {
-  const canvas = renderer.domElement;
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  const needResize = canvas.width !== width || canvas.height !== height;
-  if (needResize) {
-    renderer.setSize(width, height, false);
+// if (!origin) {
+// const geometry = new THREE.SphereGeometry(1.5, 16, 16); // or even 0.5 for small
+//   const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+//   origin = new THREE.Mesh(geometry, material);
+//   scene.add(origin);
+// }
+
+let bgPlane = null;
+let bgMaterial = null;
+let bgUniforms = null;
+
+function createBgPlane() {
+  // depth of the plane (same as your .position.z)
+  const planeZ = -300;
+
+  // compute world-space height of the frustum at that depth
+  const vFOV  = THREE.MathUtils.degToRad( camera.fov );               // vertical FOV in radians
+  const height = 2 * Math.tan( vFOV / 2 ) * Math.abs( planeZ );      // full frustum height
+
+  // compute width from aspect
+  const width  = height * camera.aspect;
+
+  // add some extra vertical overhang (here 50% taller than the view)
+  const extra = 1.5; 
+
+  if (bgPlane) {
+    scene.remove(bgPlane);
+    bgPlane.geometry.dispose();
   }
-  return needResize;
+
+  bgPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry( width, height * extra ),
+    bgMaterial
+  );
+  bgPlane.position.set(0, 1.6, planeZ);
+  scene.add(bgPlane);
+  bgPlane.visible = (window.showBackground !== false);
+  window.bgPlane = bgPlane;
 }
+
+function getDesiredCanvasSize() {
+  if (window.fullscreenActive) {
+    // If we're fullscreen, base size on the actual fullscreen element
+    const fullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+    let rect;
+    if (fullscreen) {
+      rect = fullscreen.getBoundingClientRect();
+    } else {
+      rect = { width: window.innerWidth, height: window.innerHeight };
+    }
+    return {
+      width: Math.floor(rect.width),
+      height: Math.floor(rect.height)
+    };
+  }
+
+  // Normal / Enlarge
+  const width = pageLeft ? pageLeft.offsetWidth : window.innerWidth * 2 / 3;
+  let height;
+  if (enlargeCanvas) {
+    height = window.innerHeight / 1.5;
+  } else {
+    height = window.innerHeight / 2.2;
+  }
+  return { width, height };
+}
+
+function resizeCanvasAndCamera() {
+  const { width, height } = getDesiredCanvasSize();
+  renderer.setSize(width, height, true);
+  camera.aspect = width / height;
+
+// Use width for resizing, not height
+const visualDistance = 150; // manually tuned to fit nicely
+const fitFov = 2 * THREE.MathUtils.radToDeg(
+// Saber length in units = 100
+  Math.atan((100.0 / camera.aspect) / (2 * visualDistance))
+);
+camera.fov = fitFov;
+
+  camera.updateProjectionMatrix();
+  normalHeight = window.innerHeight / 3;
+}
+window.resizeCanvasAndCamera = resizeCanvasAndCamera;
 
 
 const bloom = false;
@@ -48,7 +135,6 @@ if (bloom) {
 var hilt;
 var blade;
 
-
 THREE.ShaderChunk.tonemapping_pars_fragment = THREE.ShaderChunk.tonemapping_pars_fragment.replace(
   'vec3 CustomToneMapping( vec3 color ) { return color; }',
   `vec3 CustomToneMapping(vec3 color) {
@@ -62,11 +148,8 @@ renderer.toneMapping = THREE.CustomToneMapping;
 class BladeGeometry extends THREE.BufferGeometry {
 
   constructor( radiusTop = 1, radiusBottom = 1, height = 1, radialSegments = 32, heightSegments = 1, openEnded = false, thetaStart = 0, thetaLength = Math.PI * 2 ) {
-
     super();
-
     this.type = 'CylinderGeometry';
-
     this.parameters = {
       radiusTop: radiusTop,
       radiusBottom: radiusBottom,
@@ -120,22 +203,15 @@ class BladeGeometry extends THREE.BufferGeometry {
       const slope = ( radiusBottom - radiusTop ) / height;
 
       // generate vertices, normals and uvs
-
       for ( let y = 0; y <= heightSegments; y ++ ) {
-
         const indexRow = [];
-
         const v = y / heightSegments;
 
         // calculate the radius of the current row
-
         const radius = v * ( radiusBottom - radiusTop ) + radiusTop;
-
         for ( let x = 0; x < radialSegments; x ++ ) {
           const u = x / radialSegments;
-
           const theta = u * thetaLength + thetaStart;
-
           const sinTheta = Math.sin( theta );
           const cosTheta = Math.cos( theta );
 
@@ -389,9 +465,9 @@ const bladeHaloFragmentShader = `
       vec2(1.0 - flyby_pt, sqrt(dist) / 2.0 / cosA)
     ).rgb;
     // vec3 haze_color = texture2D(iChannel0, vec2(flyby_pt, 1.0)).rgb;
-    haze_color    /= (dist * dist * dist * dist * 500.0 + 1.0);
+//    haze_color    /= (dist * dist * dist * dist * 500.0 + 1.0);  // FH
+    haze_color /= (dist * dist * 30.0 + 1.0);  // BC likey
     // haze_color *= 1.0 - sqrt(dist);
-
     gl_FragColor = vec4(haze_color, 1.0);
   }
 `;
@@ -402,12 +478,72 @@ const blade_data =  new Uint8Array(4 * 144);
 const haze_data =  new Uint8Array(4 * 144 * max_haze_depth);
 var blade_texture;
 var haze_texture;
+const TRAIL_LENGTH = 100;  // ~100
+let bladeTrailMeshes = [];
+window.bladeTrailTransforms = [];
+let bladeTrailMeshesReady = false;
+let trailCaptureInterval = 2;  // Capture every frame by default
+let frameCounter = 0;
+const LERP_STEPS = 40;
+const trailSpeedThreshold = 120;  // 100
+let wasOverTrailThreshold = false;
+
+function lerpMatrix4(m1, m2, alpha) {
+  // Decompose matrices into position, quaternion, scale
+  const pos1 = new THREE.Vector3(), quat1 = new THREE.Quaternion(), scale1 = new THREE.Vector3();
+  m1.decompose(pos1, quat1, scale1);
+  const pos2 = new THREE.Vector3(), quat2 = new THREE.Quaternion(), scale2 = new THREE.Vector3();
+  m2.decompose(pos2, quat2, scale2);
+  const mLerp = new THREE.Matrix4();
+  mLerp.compose(
+    pos1.clone().lerp(pos2, alpha),
+    quat1.clone().slerp(quat2, alpha),
+    scale1.clone().lerp(scale2, alpha)
+  );
+  return mLerp;
+}
 
 var loader = new RGBELoader().setPath('./');
-loader.load('ostrich_road_2k.hdr', function(texture) {
+// loader.load('ostrich_road_2k.hdr', function(texture) {
+// loader.load('hallway_sky2.hdr', function(texture) {
+loader.load('1965hallway_sky.hdr', function(texture) {
+
   texture.mapping = THREE.EquirectangularReflectionMapping;
-  // scene.background = texture;
+  //  scene.background = texture;
   var envMap = texture;
+
+  // Background “painting” behind the saber
+  bgUniforms = {
+    envMap: { value: envMap },
+    zoom: { value: 2.0 },  // >1 zooms in <1 zooms out
+    brightness: { value: 3.0 }
+  };
+
+  bgMaterial = new THREE.ShaderMaterial({
+    uniforms: bgUniforms,
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D envMap;
+      uniform float zoom;
+      uniform float brightness;
+      varying vec2 vUv;
+      void main() {
+        vec2 uv = (vUv - 0.5) / zoom + 0.5;
+        vec3 color = texture(envMap, uv).rgb;
+        color *= brightness; // brighten
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `,
+    depthWrite: false
+  });
+createBgPlane(); 
+
   const gltf_loader = new GLTFLoader();
   gltf_loader.load('obi/scene.gltf', function(gltf) {
     gltf.scene.traverse(function(child) {
@@ -419,7 +555,8 @@ loader.load('ostrich_road_2k.hdr', function(texture) {
 
     scene.add(gltf.scene);
     hilt = gltf.scene;
-    hilt.position.set(0, 1.6, -200);
+    window.hilt = hilt;
+    hilt.position.set(0, 1.6, -200);  // turns out this isn't used?
 
     if (true) {
       // create a buffer with color data
@@ -443,15 +580,12 @@ loader.load('ostrich_road_2k.hdr', function(texture) {
       haze_texture.needsUpdate     = true;
 
       const blade_translation = new THREE.Matrix4()
-        .makeTranslation(0.0, -20.0, 0.0)
+        .makeTranslation(0.0, -20, 0.0)
         .multiply(new THREE.Matrix4().makeRotationX(Math.PI));
 
-      // const blade_geometry = new THREE.CapsuleGeometry(1.2, 80, 8, 64, 1);
-      // const blade_geometry = new THREE.CylinderGeometry(1.2, 1.2, 80, 64, 1);
       const blade_geometry = new BladeGeometry(1.3, 1.3, 110, 64, 1);
       blade_geometry.applyMatrix4(blade_translation);
 
-      // const blade_material = new THREE.MeshBasicMaterial({ color: 0xffffffff });
       const blade_material = new THREE.MeshStandardMaterial({
         color:             0xCCCCCC,
         emissiveMap:       blade_texture,
@@ -462,6 +596,17 @@ loader.load('ostrich_road_2k.hdr', function(texture) {
 
       blade = new THREE.Mesh(blade_geometry, blade_material);
       hilt.add(blade);
+
+      // Trail
+      for (let i = 0; i < TRAIL_LENGTH; ++i) {
+        const trailBlade = new THREE.Mesh(blade_geometry, blade_material.clone());
+        trailBlade.material.opacity = 0.1;   // Fully visible for now, can reduce for fading
+        trailBlade.material.transparent = false;
+        trailBlade.visible = false;  // Start hidden
+        scene.add(trailBlade);
+        bladeTrailMeshes.push(trailBlade);
+      }
+      bladeTrailMeshesReady = true;
 
       const blade_aura_geometry = new BladeGeometry(50, 50, 110, 16, 1);
       blade_aura_geometry.applyMatrix4(blade_translation);
@@ -499,7 +644,6 @@ loader.load('ostrich_road_2k.hdr', function(texture) {
 });
 
 
-
 if (false) {
   const geometry = new THREE.BoxGeometry( 1, 1, 1 );
   const material = new THREE.MeshBasicMaterial( { color: 0x00ff00 } );
@@ -515,7 +659,6 @@ if (false) {
     console.error( error );
   } );
 }
-
 // camera.position.z = 200;
 
 var Q = 0;
@@ -526,97 +669,165 @@ function actual_millis() {
 }
 
 function animate() {
+  if (!bladeTrailMeshesReady) return;
 
+  // ensure arrays exist
+  window.bladeTrailTransforms = window.bladeTrailTransforms || [];
+  bladeTrailMeshes            = bladeTrailMeshes            || [];
+
+  resizeCanvasAndCamera();
   Q++;
 
-  if (resizeRendererToDisplaySize(renderer)) {
-    const canvas = renderer.domElement;
-    camera.aspect = canvas.clientWidth / canvas.clientHeight;
-    camera.updateProjectionMatrix();
-  }
-
+  // --- LED + haze update (unchanged) ---
   if (blade_texture) {
-    var pixels = window.getSaberColors();
-
-    const m = actual_millis();
+    const pixels = window.getSaberColors();
     for (let i = 0; i < 144; i++) {
-      const stride        = i * 4;
-      blade_data[stride    ] = Math.round(255 * pixels[i * 3    ]);
-      blade_data[stride + 1] = Math.round(255 * pixels[i * 3 + 1]);
-      blade_data[stride + 2] = Math.round(255 * pixels[i * 3 + 2]);
+      const stride = i * 4;
+      blade_data[stride    ] = Math.round(255 * pixels[i*3    ]);
+      blade_data[stride + 1] = Math.round(255 * pixels[i*3 + 1]);
+      blade_data[stride + 2] = Math.round(255 * pixels[i*3 + 2]);
       blade_data[stride + 3] = 255;
     }
     blade_texture.needsUpdate = true;
 
     const num_leds = 144;
-    for (var haze_depth = 0; haze_depth < max_haze_depth; haze_depth++) {
-      for (var i = 0; i < num_leds; i++) {
-        var R = 0.0;
-        var G = 0.0;
-        var B = 0.0;
-        var W = 0.0;
-
-        //        var haze_dist = 2.0 ** haze_depth;
-        var haze_dist = 1.0 + 4.0 * haze_depth;
-        for (var D = -64; D <= 64; D++) {
-          var p    = i + D;
-          var dist = Math.abs(D) + 1;
-          if (p < 0) {
-            continue;
-            dist += -p / 2.0;
-            p = 0;
-          }
-          if (p >= num_leds) {
-            continue;
-            dist += (p - (num_leds - 1)) / 2;
-            p = num_leds - 1;
-          }
-          dist = dist / haze_dist + 1.0;
-          var weight = 1.0 / (dist * dist);
-          const stride3 = p * 3;
-          R += pixels[stride3    ] * weight;
-          G += pixels[stride3 + 1] * weight;
-          B += pixels[stride3 + 2] * weight;
-          W += weight;
+    for (let depth = 0; depth < max_haze_depth; depth++) {
+      for (let i = 0; i < num_leds; i++) {
+        let R=0, G=0, B=0, W=0;
+        const haze_dist = 1 + 4 * depth;
+        for (let D = -64; D <= 64; D++) {
+          let p = i + D;
+          if (p < 0 || p >= num_leds) continue;
+          const dist = (Math.abs(D)+1)/haze_dist + 1;
+          const wgt  = 1/(dist*dist);
+          R += pixels[p*3    ] * wgt;
+          G += pixels[p*3 + 1] * wgt;
+          B += pixels[p*3 + 2] * wgt;
+          W += wgt;
         }
-        //              W *= 2;
-        R /= W;
-        G /= W;
-        B /= W;
-        haze_data[(i + haze_depth * num_leds) * 4    ] = Math.round(R * 255);
-        haze_data[(i + haze_depth * num_leds) * 4 + 1] = Math.round(G * 255);
-        haze_data[(i + haze_depth * num_leds) * 4 + 2] = Math.round(B * 255);
-        haze_data[i * 4 + 3] = 255;
+        R/=W; G/=W; B/=W;
+        const off = (i + depth*num_leds)*4;
+        haze_data[off    ] = Math.round(R*255);
+        haze_data[off + 1] = Math.round(G*255);
+        haze_data[off + 2] = Math.round(B*255);
+        haze_data[off + 3] = 255;
       }
     }
     haze_texture.needsUpdate = true;
   }
 
-  var mat = window.getSaberMove();
-  if (hilt) {
-    //        console.log(mat)
-    hilt.rotation.z = 3.1415 / 2;
-    //        hilt.rotation.x += 0.01;
-    //        hilt.rotation.y += 0.007;
-    //      hilt.rotation.z += 0.003;
+  // --- Smooth home‐reset ---
+  if (HOME_POS) {
+    let done = true;
+    for (let i = 0; i < MOVE_MATRIX.values.length; i++) {
+      const diff = default_move_matrix().values[i] - MOVE_MATRIX.values[i];
+      MOVE_MATRIX.values[i] += diff * 0.15;
+      if (Math.abs(diff) > 1) done = false;
+    }
+    if (done) {
+      HOME_POS = false;
+      MOVE_MATRIX = default_move_matrix();
+    }
+  }
 
-    //        var m2 = new THREE.Matrix4();
-    //        m2.fromArray(mat.values, 0);
-    //        console.log(mat.values);
-    //        hilt.applyMatrix4(m2);
-    // hilt.matrix = m2;
-    //        hilt.setRotationFromMatrix(m2);
-    //        console.log(mat.values);
-    //        console.log(hilt.matrix.elements);
+  const trailsEnabled = !!window.showBladeTrails;
 
+  // --- Update hilt & capture trail frames ---
+  if (hilt && blade) {
+    const mat = window.getSaberMove();
     hilt.matrixAutoUpdate = false;
     hilt.matrix.fromArray(mat.values);
+    hilt.updateMatrixWorld(true);
+
+    frameCounter++;
+
+    const overThreshold = lastSwingSpeed > trailSpeedThreshold;
+
+    // If trails are OFF, keep buffer empty and skip everything.
+    if (!trailsEnabled) {
+      window.bladeTrailTransforms = [];
+    } else if (overThreshold && !wasOverTrailThreshold) {
+    // Just crossed threshold, start fresh so there are no retro trails
+      window.bladeTrailTransforms = [];
+    }
+
+    // Only record when above threshold (saves work; no frames recorded while slow)
+    if (overThreshold && (frameCounter % trailCaptureInterval === 0)) {
+      blade.updateMatrixWorld(true);
+      window.bladeTrailTransforms.push(blade.matrixWorld.clone());
+      if (window.bladeTrailTransforms.length > TRAIL_LENGTH) {
+        window.bladeTrailTransforms.shift();
+      }
+    }
+
+    // If we dropped BELOW the threshold, clear out the buffer so the next swing starts clean.
+    if (!overThreshold) window.bladeTrailTransforms = [];
+
+    wasOverTrailThreshold = overThreshold;
   }
 
-  if (bloom) {
-    composer.render();
-  } else {
-    renderer.render(scene, camera);
+  // Reset blade trail visibility
+  bladeTrailMeshes.forEach(m => m.visible = false);
+
+  // Only render trails if the toggle is ON and swinging fast
+  if (trailsEnabled &&
+    lastSwingSpeed > trailSpeedThreshold &&
+    window.bladeTrailTransforms.length > 1 &&
+    bladeTrailMeshes.length > 0) {
+
+    const baseLocal = new THREE.Vector3(0, 35, 0);
+    const tipLocal  = new THREE.Vector3(0, -75, 0);
+
+    // Track the current emitter position
+    const currentBaseWorld = baseLocal.clone().applyMatrix4(blade.matrixWorld);
+
+    // Interpolate trail‐matrices
+    const VM = [];
+    const T  = window.bladeTrailTransforms;
+    for (let i = 0; i < T.length - 1; i++) {
+      VM.push(T[i]);
+      for (let s = 1; s <= LERP_STEPS; s++) {
+        VM.push(lerpMatrix4(T[i], T[i+1], s/(LERP_STEPS+1)));
+      }
+    }
+    VM.push(T[T.length-1]);
+
+      // Render each ghost splayed between base→tip
+    VM.forEach((ghostMat, idx) => {
+      // Where previous emitter & tip were:
+      const oldBaseWorld = baseLocal.clone().applyMatrix4(ghostMat);
+      const oldTipWorld  = tipLocal.clone().applyMatrix4(ghostMat);
+
+      // Adjustable old / current emitter trail anchor point (0 = full old, 1 = full current)
+      const blend   = 0.5; 
+      const anchor  = oldBaseWorld.clone().lerp(currentBaseWorld, blend);
+
+      // Aim from that anchor to the old tip
+      const dir  = oldTipWorld.clone().sub(anchor).normalize();
+      const quat = new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(0, -1, 0),
+        dir
+      );
+      // Slide the mesh origin so baked emitter lines up at our anchor
+      const offset     = baseLocal.clone().applyQuaternion(quat);
+      const meshOrigin = anchor.clone().sub(offset);
+      const ghostMatrix = new THREE.Matrix4().compose(
+        meshOrigin,
+        quat,
+        new THREE.Vector3(1, 1, 1)
+      );
+      const mesh = bladeTrailMeshes[idx % bladeTrailMeshes.length];
+      mesh.matrixAutoUpdate = false;
+      mesh.visible          = true;
+      mesh.matrix.copy(ghostMatrix);
+    });
+  } else if (!trailsEnabled) { // make sure none show when off
+    bladeTrailMeshes.forEach(m => m.visible = false);
   }
+  // Final render - real blade always there
+  renderer.render(scene, camera);
 }
-renderer.setAnimationLoop( animate );
+
+renderer.setAnimationLoop(animate);
+
+// added on/off toggles in settings for trails and background img.

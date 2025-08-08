@@ -1,8 +1,14 @@
 # ProffieOS-StyleEditor
 
-Try it: https://fredrik.hubbe.net/ProffieOS-StyleEditor/style_editor.html
+Sound enabled. Hum, Smoothswings, accent swings/slashes and ALL effects.
+Uses Liquid Static font from https://github.com/profezzorn/SoundFonts as default.
+Use sound controls bar to toggle sound on/off, control volume, or load a full font of your own with just a click.
+Fullscreen mode option.
+All effects use WavLen<> for their timings. (see settings panel to toggle on, or use a global value)
 
-To test it locally, run "npm install" then "npx vite" and to go the URL that it gives you.
+a test blade style that just does a different color wipe for each effect can be had here:
+https://www.dropbox.com/scl/fi/kv3ja216z0jpxgbbeehff/testStyle.txt?rlkey=edjplu9s4dt3we30cp958i2k8&st=fh78wn6b&dl=0
+A sound font with all sounds for testing here:
+https://www.dropbox.com/scl/fo/ebwocpg9kcacdfvsz5j5w/ANNPnusbNrx6RK07tmnUli4?rlkey=iogr19073ky2wkr7ufdrsmb8a&st=7gah1epu&dl=0
 
-To deploy to a web server use "npx vite build" and copy the contents of the "dist/" folder to your web server.
-
+A work in progress still for sure, but it's coming along.
